@@ -1,0 +1,62 @@
+{
+  "combo": "CW+sector0.30",
+  "criterion": "B \u2014 max CAGR_d subject to MDD_d >= baseline - 1pp AND Sharpe_d > baseline_Sharpe",
+  "baseline_used": "EW_baseline",
+  "levers": {
+    "confidence_weighted": true,
+    "sector_max_weight": 0.3
+  },
+  "top_k": 10,
+  "design_window": "2020-01-01 to 2023-12-31",
+  "holdout_window": "2024-01-01 to end",
+  "design_metrics": {
+    "Total_Return": 2.7279203354031023,
+    "CAGR": 0.39556184564310404,
+    "Sharpe": 0.9815317039917899,
+    "Sortino": 1.3795783652600642,
+    "Max_Drawdown": -0.3763210550188567,
+    "Calmar": 1.0511286582763306,
+    "VaR_95": -0.0341381597717701,
+    "Win_Rate": 0.5276381909547738,
+    "MDD_Duration": 211.0,
+    "Tail_Ratio": 1.122734338367162,
+    "Avg_Daily_Ret": 0.0015940848408338255,
+    "Std_Daily_Ret": 0.023264095577716207,
+    "N_Days": 995.0
+  },
+  "holdout_metrics": {
+    "Total_Return": 0.714136922896645,
+    "CAGR": 0.2841669913965148,
+    "Sharpe": 0.8975863238267795,
+    "Sortino": 1.327229616707931,
+    "Max_Drawdown": -0.22220228995224245,
+    "Calmar": 1.2788661694602261,
+    "VaR_95": -0.02653697441936832,
+    "Win_Rate": 0.5452865064695009,
+    "MDD_Duration": 79.0,
+    "Tail_Ratio": 1.0049255929077958,
+    "Avg_Daily_Ret": 0.0011479317406501578,
+    "Std_Daily_Ret": 0.017549271928061067,
+    "N_Days": 541.0
+  },
+  "full_metrics": {
+    "Total_Return": 5.390165892531701,
+    "CAGR": 0.35443125376800877,
+    "Sharpe": 0.9495317758737669,
+    "Sortino": 1.3359644006005151,
+    "Max_Drawdown": -0.3763210550188567,
+    "Calmar": 0.9418321112812806,
+    "VaR_95": -0.03179323751530561,
+    "Win_Rate": 0.5338541666666666,
+    "MDD_Duration": 211.0,
+    "Tail_Ratio": 1.1072508191163735,
+    "Avg_Daily_Ret": 0.0014369436772925725,
+    "Std_Daily_Ret": 0.021420987958762936,
+    "N_Days": 1536.0
+  },
+  "caveats": [
+    "Criterion B was chosen post-hoc after observing the grid \u2014 disclose in thesis.",
+    "No formal alpha test (HAC / bootstrap) was run on this combo \u2014 CAGR uplift may not be statistically significant.",
+    "v1 is sealed (2026-04-21). This finding is a v2 candidate, not a v1 production change."
+  ]
+}

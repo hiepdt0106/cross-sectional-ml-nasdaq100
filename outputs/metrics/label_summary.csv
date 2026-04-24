@@ -1,0 +1,11 @@
+metric,value
+n_rows,173536.0
+n_tickers,68.0
+label_pos,93389.0
+label_neg,79467.0
+pos_rate,0.53815346671584
+avg_holding_td,3.410063868190864
+alpha_label_pos_rate,0.14654019915176103
+alpha_ext_label_pos_rate,0.19050225889728933
+alpha_ext_label_coverage,0.38100451779457867
+alpha_ret_mean,0.005938299005526994

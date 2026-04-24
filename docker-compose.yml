@@ -1,0 +1,49 @@
+version: "3.9"
+
+services:
+  # ── Full pipeline: data → features → labels → models → backtest ──
+  pipeline:
+    build: .
+    container_name: ml-trading-pipeline
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./outputs:/app/outputs
+      - ./configs:/app/configs
+
+  # ── Individual stages ────────────────────────────────────────────
+  data:
+    build: .
+    container_name: ml-trading-data
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./configs:/app/configs
+    entrypoint: ["python", "-m", "scripts.run_data_pipeline"]
+    command: ["--config", "configs/base.yaml"]
+
+  features:
+    build: .
+    container_name: ml-trading-features
+    volumes:
+      - ./data:/app/data
+      - ./configs:/app/configs
+    entrypoint: ["python", "-m", "scripts.run_features"]
+    command: ["--config", "configs/base.yaml"]
+
+  backtest:
+    build: .
+    container_name: ml-trading-backtest
+    volumes:
+      - ./data:/app/data
+      - ./outputs:/app/outputs
+      - ./configs:/app/configs
+    entrypoint: ["python", "-m", "scripts.run_backtest"]
+    command: ["--config", "configs/base.yaml"]
+
+  # ── Tests ────────────────────────────────────────────────────────
+  test:
+    build: .
+    container_name: ml-trading-test
+    entrypoint: ["python", "-m", "pytest"]
+    command: ["-v", "--tb=short"]

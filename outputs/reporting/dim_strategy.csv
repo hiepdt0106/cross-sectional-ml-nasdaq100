@@ -1,0 +1,6 @@
+strategy,strategy_sort,feature_set,strategy_group,description
+ML_Full_EW,1,Full,ML,Equal-weight ensemble using the full feature set.
+ML_Full_CW,2,Full,ML,Confidence-weighted ensemble using the full feature set.
+BH_QQQ,3,Benchmark,Benchmark,Buy-and-hold QQQ ETF — primary benchmark with no look-ahead bias.
+BH_MCap10,4,Benchmark,Benchmark,"Buy-and-hold benchmark from static market-cap top-10 basket (look-ahead, reference only)."
+BH_Full,5,Benchmark,Benchmark,Buy-and-hold benchmark across the full tradable universe.

@@ -1,0 +1,33 @@
+{
+  "fold_1_test_2020": {
+    "LR": {
+      "params": {
+        "C": 0.03148911647956861,
+        "class_weight": "balanced"
+      },
+      "inner_cv_auc": 0.5266064342267812
+    },
+    "RF": {
+      "params": {
+        "n_estimators": 250,
+        "max_depth": 4,
+        "min_samples_leaf": 7,
+        "max_features": 0.7330880728874676
+      },
+      "inner_cv_auc": 0.5300809217432451
+    },
+    "LGBM": {
+      "params": {
+        "n_estimators": 250,
+        "num_leaves": 40,
+        "min_child_samples": 32,
+        "learning_rate": 0.019553708662745254,
+        "feature_fraction": 0.7641485131528328,
+        "bagging_fraction": 0.6488228512282146,
+        "lambda_l1": 1.4607232426760908,
+        "lambda_l2": 1.8318092164684585
+      },
+      "inner_cv_auc": 0.5110827804267919
+    }
+  }
+}

@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ml-trading-nasdaq100"
+version = "1.0.0"
+description = "ML cross-sectional equity strategy on a NASDAQ-100-style universe"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+    "pandas>=2.1",
+    "numpy>=1.26",
+    "pyarrow>=14.0",
+    "requests>=2.31",
+    "yfinance>=0.2",
+    "PyYAML>=6.0",
+    "scikit-learn>=1.4",
+    "lightgbm>=4.0",
+    "optuna>=3.4",
+    "hmmlearn>=0.3",
+    "pandas-market-calendars>=4.4",
+    "python-dotenv>=1.0",
+    "tqdm>=4.66",
+    "statsmodels>=0.14",
+    "scipy>=1.12",
+    "matplotlib>=3.8",
+    "fredapi>=0.5",
+    "pandera>=0.18",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+ml-trading-run = "scripts.run_all:main"
+
+[tool.setuptools.packages.find]
+include = ["src*", "scripts*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

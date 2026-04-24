@@ -1,0 +1,158 @@
+data:
+  start_date: "2016-01-01"
+  end_date: "2026-03-01"
+  tickers:
+    - AAPL
+    - MSFT
+    - NVDA
+    - AVGO
+    - AMD
+    - QCOM
+    - AMAT
+    - LRCX
+    - MU
+    - INTC
+    - TXN
+    - KLAC
+    - MCHP
+    - ADI
+    - ADBE
+    - CRM
+    - ORCL
+    - PANW
+    - SNPS
+    - CDNS
+    - INTU
+    - WDAY
+    - ANSS
+    - FTNT
+    - AMZN
+    - GOOGL
+    - META
+    - NFLX
+    - EBAY
+    - PYPL
+    - BKNG
+    - MELI
+    - JD
+    - ABNB
+    - TSLA
+    - RIVN
+    - AMGN
+    - GILD
+    - REGN
+    - VRTX
+    - ISRG
+    - MRNA
+    - DXCM
+    - IDXX
+    - BIIB
+    - ILMN
+    - COST
+    - PEP
+    - SBUX
+    - MDLZ
+    - MNST
+    - KDP
+    - AZN
+    - KHC
+    - DLTR
+    - ROST
+    - PAYX
+    - FAST
+    - ODFL
+    - CTAS
+    - VRSK
+    - CSX
+    - EA
+    - XEL
+    - CMCSA
+    - TMUS
+    - CHTR
+    - WBD
+    - ADP
+    - LULU
+    - HON
+    - PCAR
+  benchmark_ticker: "QQQ"
+  min_trading_days: 200
+  max_nan_ratio: 0.02
+  max_consec_nan: 5
+
+treasury:
+  symbols:
+    us10y: "DGS10"
+    us2y: "DGS2"
+  ffill_limit: 5
+
+benchmark_mcap:
+  reference_date: "2020-01-01"
+  tickers:
+    - AAPL     # Apple
+    - MSFT     # Microsoft
+    - AMZN     # Amazon
+    - GOOGL    # Alphabet (Google)
+    - META     # Facebook (renamed to META)
+    - TSLA     # Tesla (strong rally in 2020)
+    - NVDA     # Nvidia
+    - INTC     # Intel
+    - PYPL     # PayPal
+    - ADBE     # Adobe
+
+labeling:
+  horizon: 10
+  pt_sl_mult: 1.5
+  vol_window: 20
+
+strategy:
+  top_k: 10
+  rebalance_days: 10
+  confidence_weighted: false
+  max_weight_cap: 0.25
+  hold_buffer: 5
+  hold_score_tolerance: 0.02
+  signal_anchor_weight: 0.0
+  signal_anchor_features:
+    - mom_63d
+    - rel_strength_63d
+    - trend_strength_21d
+    - price_sma200
+
+walkforward:
+  first_test_year: 2020
+  max_train_years: 8
+
+regime:
+  lookback: 504
+  refit_frequency: 63
+
+backtest:
+  cost_bps: 10
+  slippage_bps: 2
+  initial_capital: 10000
+  regime_targeting: true
+  regime_col: "p_high_vol"
+  regime_sensitivity: 0.45
+  regime_min_exposure: 0.55
+  regime_max_exposure: 1.00
+  breadth_gate: true
+  breadth_col: "market_breadth_200d"
+  breadth_threshold: 0.48
+  breadth_low_exposure: 0.65
+  benchmark_trend_gate: true
+  benchmark_col: "bench_close"
+  benchmark_sma_window: 200
+  benchmark_low_exposure: 0.70
+  vol_targeting: true
+  target_vol: 0.14
+  vol_lookback_days: 63
+  vol_min_scale: 0.75
+  vol_max_scale: 1.15
+  dd_threshold: -0.08
+  dd_exit: -0.04
+  dd_exposure: 0.70
+  sector_max_weight: 0.40
+
+random_benchmark:
+  n_iterations: 200
+  seed: 42

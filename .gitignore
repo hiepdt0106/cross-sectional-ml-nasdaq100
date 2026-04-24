@@ -1,0 +1,48 @@
+# Secrets
+.env
+.coverage
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data — exclude raw + interim + processed by default …
+data/raw/cache/
+data/interim/
+data/processed/*
+# … BUT ship pre-computed predictions so reviewers can re-run the backtest
+# without a Tiingo API key (see README §Reproducibility).
+# Note: parent dir uses /* (not /) so the negation below can take effect.
+!data/processed/predictions_ens_full.parquet
+
+# Outputs — ship results, exclude only runtime logs
+outputs/logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+.claude/
+
+# Runtime logs (root-level)
+logs/
+
+# Local-only artifacts
+test_report.txt
+
+# Experiments — keep code, configs, and summary CSVs; drop heavyweight logs
+experiments/*/results/*.log
+experiments/**/__pycache__/

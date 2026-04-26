@@ -21,6 +21,7 @@ if str(ROOT) not in sys.path:
 import argparse
 import logging
 
+import numpy as np
 import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
@@ -44,7 +45,9 @@ def sensitivity_top_k(
     ks: list[int] = None,
     base_cfg: BacktestEngineConfig = None,
 ) -> pd.DataFrame:
-    """Sensitivity analysis: vary top-K."""
+    """Sensitivity analysis: vary top-K. All other settings inherit from base_cfg
+    so the comparison is against the same production strategy."""
+    from dataclasses import replace
     if ks is None:
         ks = [3, 5, 8, 10, 15, 20]
     if base_cfg is None:
@@ -52,12 +55,7 @@ def sensitivity_top_k(
 
     results = []
     for k in ks:
-        cfg_k = BacktestEngineConfig(
-            top_k=k,
-            rebalance_days=base_cfg.rebalance_days,
-            cost_bps=base_cfg.cost_bps,
-            initial_capital=base_cfg.initial_capital,
-        )
+        cfg_k = replace(base_cfg, top_k=k)
         eq, _ = run_backtest(df, pred_df, cfg_k)
         m = compute_metrics(eq)
         m["top_k"] = k
@@ -73,7 +71,9 @@ def sensitivity_cost(
     costs: list[float] = None,
     base_cfg: BacktestEngineConfig = None,
 ) -> pd.DataFrame:
-    """Sensitivity analysis: vary transaction cost."""
+    """Sensitivity analysis: vary transaction cost. All other settings inherit
+    from base_cfg so the comparison is against the same production strategy."""
+    from dataclasses import replace
     if costs is None:
         costs = [0, 5, 10, 15, 20, 30]
     if base_cfg is None:
@@ -81,12 +81,7 @@ def sensitivity_cost(
 
     results = []
     for c in costs:
-        cfg_c = BacktestEngineConfig(
-            top_k=base_cfg.top_k,
-            rebalance_days=base_cfg.rebalance_days,
-            cost_bps=c,
-            initial_capital=base_cfg.initial_capital,
-        )
+        cfg_c = replace(base_cfg, cost_bps=c)
         eq, _ = run_backtest(df, pred_df, cfg_c)
         m = compute_metrics(eq)
         m["cost_bps"] = c
@@ -102,7 +97,9 @@ def sensitivity_rebalance(
     freqs: list[int] = None,
     base_cfg: BacktestEngineConfig = None,
 ) -> pd.DataFrame:
-    """Sensitivity analysis: vary rebalance frequency."""
+    """Sensitivity analysis: vary rebalance frequency. All other settings inherit
+    from base_cfg so the comparison is against the same production strategy."""
+    from dataclasses import replace
     if freqs is None:
         freqs = [5, 10, 15, 21]
     if base_cfg is None:
@@ -110,12 +107,7 @@ def sensitivity_rebalance(
 
     results = []
     for f in freqs:
-        cfg_f = BacktestEngineConfig(
-            top_k=base_cfg.top_k,
-            rebalance_days=f,
-            cost_bps=base_cfg.cost_bps,
-            initial_capital=base_cfg.initial_capital,
-        )
+        cfg_f = replace(base_cfg, rebalance_days=f)
         eq, _ = run_backtest(df, pred_df, cfg_f)
         m = compute_metrics(eq)
         m["rebalance_days"] = f
@@ -248,11 +240,24 @@ def run_analysis(config_path: str | Path | None = None):
     metrics_dir = cfg.dir_outputs / "metrics"
     metrics_dir.mkdir(parents=True, exist_ok=True)
 
+    # Base config for sensitivity must match production CW so the comparison
+    # is meaningful (otherwise sensitivity_cost.csv reports a stripped-down
+    # EW baseline whose Sharpe is structurally lower than the headline).
+    from src.config import SECTOR_MAP
     base_cfg = BacktestEngineConfig(
         top_k=cfg.strategy.top_k,
         rebalance_days=cfg.strategy.rebalance_days,
         cost_bps=cfg.backtest.cost_bps,
+        slippage_bps=cfg.backtest.slippage_bps,
         initial_capital=cfg.backtest.initial_capital,
+        confidence_weighted=True,  # match production CW headline
+        max_weight_cap=cfg.strategy.max_weight_cap,
+        hold_buffer=cfg.strategy.hold_buffer,
+        hold_score_tolerance=cfg.strategy.hold_score_tolerance,
+        signal_anchor_weight=cfg.strategy.signal_anchor_weight,
+        signal_anchor_features=tuple(cfg.strategy.signal_anchor_features),
+        sector_max_weight=cfg.backtest.sector_max_weight,
+        sector_map=SECTOR_MAP,
     )
 
     # ══════════════════════════════════════════════════════════════
@@ -273,6 +278,35 @@ def run_analysis(config_path: str | Path | None = None):
     log.info("\n  Rebalance frequency sensitivity:")
     sens_reb = sensitivity_rebalance(df, pred_full, base_cfg=base_cfg)
     sens_reb.to_csv(metrics_dir / "sensitivity_rebalance.csv", index=False)
+
+    # ══════════════════════════════════════════════════════════════
+    # 1b. DEFLATED SHARPE RATIO (Bailey-LdP 2014)
+    # ══════════════════════════════════════════════════════════════
+    log.info("\n" + "═" * 60)
+    log.info("▶ Deflated Sharpe Ratio (multi-test correction)")
+    log.info("═" * 60)
+    from scipy import stats as sps
+    from src.backtest.engine import deflated_sharpe_ratio
+    rf_annual = 0.04  # matches compute_metrics default
+    dsr_rows = []
+    for strat_name, eq in [("ML_Full_CW", eq_cw), ("ML_Full_EW", eq_full)]:
+        if eq is None or len(eq) == 0:
+            continue
+        ret = eq["daily_ret"].dropna()
+        excess = ret - (rf_annual / 252)
+        N = len(excess)
+        sr_ann = excess.mean() / excess.std(ddof=1) * np.sqrt(252)
+        skew = float(sps.skew(excess))
+        kurt_ex = float(sps.kurtosis(excess, fisher=True))
+        for n_trials in [3, 5, 10, 20]:
+            d = deflated_sharpe_ratio(sr_ann, n_days=N, n_trials=n_trials,
+                                       skew=skew, kurtosis_excess=kurt_ex)
+            d["strategy"] = strat_name
+            dsr_rows.append(d)
+            log.info(f"  {strat_name} n_trials={n_trials:>2d}: obs_SR={d['observed_sharpe']:.3f} "
+                     f"E[max]={d['expected_max_sharpe']:.3f} p_DSR={d['p_value']:.4f}")
+    pd.DataFrame(dsr_rows).to_csv(metrics_dir / "deflated_sharpe.csv", index=False)
+    log.info(f"  Saved: {metrics_dir / 'deflated_sharpe.csv'}")
 
     # ══════════════════════════════════════════════════════════════
     # 2. FIGURES

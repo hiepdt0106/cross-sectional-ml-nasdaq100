@@ -130,25 +130,31 @@ backtest:
   cost_bps: 10
   slippage_bps: 2
   initial_capital: 10000
-  regime_targeting: true
+  # Risk overlays (regime/vol/breadth/SMA gates) were tuned in notebook 07 and
+  # dropped from production: they cut alpha faster than they cut drawdown
+  # (ML_Full_Adaptive: alpha = -13.35%, p = 0.025). See README §2 + §7.
+  # Knob values below are kept for reproducing the tuning sweep, but the
+  # gate flags are OFF so the production pipeline matches headline numbers
+  # (exposure = 1.0 constant).
+  regime_targeting: false
   regime_col: "p_high_vol"
   regime_sensitivity: 0.45
   regime_min_exposure: 0.55
   regime_max_exposure: 1.00
-  breadth_gate: true
+  breadth_gate: false
   breadth_col: "market_breadth_200d"
   breadth_threshold: 0.48
   breadth_low_exposure: 0.65
-  benchmark_trend_gate: true
+  benchmark_trend_gate: false
   benchmark_col: "bench_close"
   benchmark_sma_window: 200
   benchmark_low_exposure: 0.70
-  vol_targeting: true
+  vol_targeting: false
   target_vol: 0.14
   vol_lookback_days: 63
   vol_min_scale: 0.75
   vol_max_scale: 1.15
-  dd_threshold: -0.08
+  dd_threshold: 0.0
   dd_exit: -0.04
   dd_exposure: 0.70
   sector_max_weight: 0.40

@@ -20,7 +20,7 @@ This repository is a final-year thesis project (v1 sealed 2026-04-21).
 ## 1. Headline results
 
 Period: **2020-01-16 → 2026-02-26** (~6 years, the model's prediction window).
-Initial capital $10,000, transaction cost 5 bps, slippage 5 bps.
+Initial capital $10,000, transaction cost 10 bps round-trip, slippage 2 bps.
 
 | Strategy | CAGR | Sharpe | MDD | Calmar | Alpha vs QQQ (annual) | p-value |
 |---|---:|---:|---:|---:|---:|---:|
@@ -41,15 +41,80 @@ a production change to preserve the holdout window's integrity. See
 
 ### Predictive-signal quality (Information Coefficient)
 
-The full walk-forward OOS **Information Coefficient** (rank correlation between
-model score and forward return) is **IC ≈ 0.05-0.06**, measured under purged
-K-fold inner CV. Grinold & Kahn's *Active Portfolio Management* classifies
-IC 0.03 as institutional-quality and IC 0.05-0.10 as world-class on a large
-universe; on a 72-ticker universe the Fundamental Law of Active Management
-(IR = IC × √breadth) predicts an information ratio consistent with the observed
-Sharpe. See §7 for the honest caveat: three independent feature-selection
-studies (rolling IC, MDA, Boruta) cap out at IC ≈ 0.05-0.06 on free-tier data,
-which is the binding constraint on further alpha.
+The IC story has two layers — both honestly reported:
+
+1. **Best single-feature |IC| ceiling ≈ 0.05-0.06.** Three independent
+   feature-selection studies (rolling IC, MDA, Boruta) on the free-tier
+   feature set converge on this number; the top single feature is
+   `rolling_beta_63d` with mean |IC| = 0.0557 (`docs/notes/v1_changelog.md`
+   §9). Theoretical ensemble-IC ceiling under realistic positive
+   feature correlation: ~0.08-0.12. Per Grinold & Kahn's *Active Portfolio
+   Management*, an IC of 0.05-0.10 is "world-class on a large universe" —
+   so the **feature ceiling itself is competitive**.
+
+2. **Realised production-ensemble OOS IC ≈ 0.01.** Computed as the daily
+   cross-sectional Spearman of the adaptive-ensemble score against forward
+   return, averaged over 1,467 OOS days. The model captures roughly 15-20%
+   of the theoretical feature-ceiling signal. Modest in absolute terms but
+   consistent — via the Fundamental Law of Active Management
+   (IR = IC × √breadth)¹ — with delivering Sharpe 0.89 on a 72-name
+   universe. See §7 for the honest caveat: the gap between the
+   feature-ceiling IC and the realised ensemble IC is the binding
+   constraint on further alpha.
+
+¹ *Raw breadth = 72; effective breadth is materially lower because of mega-cap
+tech concentration (AAPL, MSFT, NVDA, GOOGL, META, AMZN, TSLA carry cross-
+sectional correlations ≈ 0.6-0.8). Using the Clarke–de Silva–Thorley (2002)
+correction, effective breadth on a tech-heavy NDX-100 typically lands in the
+20-30 range, not 72. The IR estimate above is therefore an upper bound.*
+
+### Statistical robustness checks
+
+**Sharpe ratio uncertainty** (Lo 2002 SE, accounting for skew and excess
+kurtosis of daily returns):
+
+| Strategy | Sharpe | SE | 95% CI |
+|---|---:|---:|:--|
+| ML_Full_CW | 0.89 | 0.40 | [+0.10, +1.68] |
+| ML_Full_EW | 0.85 | 0.40 | [+0.06, +1.64] |
+| BH_QQQ | 0.67 | 0.42 | [-0.15, +1.48] |
+
+The CIs overlap heavily — ML's Sharpe edge over QQQ is consistent with the
+data but cannot be distinguished from sampling noise at 95% confidence on a
+6-year window. (This mirrors the alpha p-value picture in the headline table.)
+
+**Deflated Sharpe Ratio** (Bailey & López de Prado 2014) corrects for
+multiple-testing inflation under the null that all candidate strategies have
+zero true Sharpe:
+
+| n_trials | E[max SR] | ML_Full_CW p_DSR | ML_Full_EW p_DSR |
+|---:|---:|---:|---:|
+| 3 (LR + RF + LGBM) | 0.34 | 0.088 | 0.105 |
+| 5 (+ EW & CW variants) | 0.48 | 0.156 | 0.180 |
+| 10 (+ overlay grid in NB07) | 0.64 | 0.265 | 0.298 |
+| 20 (+ feature-selection sweeps) | 0.77 | 0.382 | 0.419 |
+
+ML_Full_CW's observed Sharpe **exceeds** the expected-maximum-under-H₀ at every
+plausible n_trials, meaning the result is directionally consistent with real
+skill rather than pure search inflation — but p_DSR remains > 5% at the higher
+n_trials counts honest accounting would assign. See implementation in
+[`src/backtest/engine.py:deflated_sharpe_ratio`](src/backtest/engine.py).
+
+**Cost sensitivity** — Sharpe and CAGR across round-trip cost levels (full
+production CW, all other settings unchanged):
+
+| cost_bps | CAGR | Sharpe | MDD | vs QQQ Sharpe (0.67) |
+|---:|---:|---:|---:|:--|
+| 0 | 35.5% | 0.94 | -37.6% | +0.27 ✅ |
+| 5 | 34.4% | 0.92 | -37.6% | +0.25 ✅ |
+| **10 (production)** | **33.3%** | **0.89** | **-37.6%** | **+0.22 ✅** |
+| 15 | 32.2% | 0.87 | -37.7% | +0.20 ✅ |
+| 20 | 31.2% | 0.85 | -37.7% | +0.18 ✅ |
+| 30 (pessimistic retail) | 29.1% | 0.80 | -37.8% | +0.13 ✅ |
+
+Even at 30 bps round-trip — well above realistic retail execution for liquid
+NDX-100 names — the strategy stays Sharpe-positive versus the QQQ benchmark.
+Source: [`outputs/metrics/sensitivity_cost.csv`](outputs/metrics/sensitivity_cost.csv).
 
 ### Why this matters
 
@@ -99,6 +164,10 @@ Tiingo + Treasury + Yahoo (macro/VIX) APIs
   produced 2020-01-16 after the walk-forward warm-up window.
 - **Signal:** ensemble of LR (scaled features), RF (cross-sectionally ranked
   features), LightGBM ranker (uses aligned forward returns when present).
+- **Ensemble:** the **production headline uses the `adaptive` method**
+  (per-fold OOS-weighted blend of the three base models). A `stacking`
+  meta-model variant is also fit and saved for ablation, but is **not** used
+  in any reported backtest number.
 - **Portfolio:** long-only top-10, rebalanced every 10 trading days, 25%
   single-stock cap, 40% sector cap, optional confidence-weighting (CW variant).
 - **Regime handling:** the market regime (`p_high_vol`) is injected as a
@@ -291,21 +360,35 @@ The GitHub Actions CI runs the full test suite on Python 3.10, 3.11, and 3.12
    IC, MDA, Boruta) cap out at IC ≈ 0.05-0.06. Higher signal would require
    alternative datasets (intraday, fundamentals, sentiment) that the free
    Tiingo tier doesn't provide.
-3. **Static universe.** Membership is a 72-ticker snapshot; historical NDX-100
-   inclusion/exclusion drift is not modeled. Survivor bias is partially present.
+3. **Static universe with survivorship bias.** The 72-ticker selection
+   conditions on continuous Tiingo coverage 2016 → 2026, excluding late IPOs,
+   delistings, and ticker changes. Both the ML strategy and the QQQ benchmark
+   inherit this bias, but **asymmetrically** — the ML top-10 selection
+   benefits more from a survivor-only universe than a passive benchmark does
+   (every name the model picks has, by construction, made it to 2026).
+   Magnitude is bounded but unknown without a dynamic-membership rerun
+   (logged as a v2 candidate).
 4. **Single regime.** 2020-2026 covers QE bull, COVID crash, 2022 bear, AI
    rally, 2025 selloff — but is still a single market epoch.
 5. **Pseudo-OOS overlay tuning.** ML training is true walk-forward OOS, but
    the 2024+ holdout was used to validate (not pick) the v2-candidate
    sector-cap tightening. A genuine OOS validation requires post-2026 data.
-6. **Transaction-cost approximation.** 5 bps cost + 5 bps slippage is a
-   research estimate, not an order-book simulation.
+6. **Transaction-cost approximation.** 10 bps cost + 2 bps slippage (12 bps
+   round-trip) is a research estimate, not an order-book simulation. See the
+   cost-sensitivity table in §1 — the strategy stays Sharpe-positive vs QQQ
+   even at 30 bps round-trip, but no order-book microstructure is modeled.
 7. **v2 hyperparameter tuning: NEGATIVE.** A walk-forward Optuna/TPE tuning
    experiment (`experiments/v2_hyperparam_tuning/`) failed to beat v1's manual
    hyperparameters under the pre-registered promote criterion (≥ +50 bps mean
    top-K return AND ≥ 4/6 fold wins). Postmortem and drift analysis live in
    [`notebooks/08_v2_tuning_postmortem.ipynb`](notebooks/08_v2_tuning_postmortem.ipynb).
    Reported here as scientific discipline, not hidden.
+8. **Retroactive split/dividend adjustment.** Tiingo's `adj_close` is rebased
+   when corporate actions occur, including events that happen *after* a given
+   training window. Returns (log-differences) are largely invariant to this
+   rebasing, so the impact on ranking decisions is small — but absolute price
+   levels at training time differ from what was historically observable. Worth
+   acknowledging as a mild form of look-ahead in the input series.
 
 ---
 
@@ -319,8 +402,10 @@ See [`docs/notes/v1_roadmap.md`](docs/notes/v1_roadmap.md) for full scope. Highl
   IC ≈ 0.05 ceiling.
 - Add dynamic universe with historical NDX-100 membership.
 - Investigate exposure-control overlays that don't kill alpha (the dropped
-  `ML_Full_Adaptive` reduced MDD from -37% to -22% but cut CAGR from 31% to 20%
-  — a Pareto-improving overlay remains an open problem).
+  `ML_Full_Adaptive` reduced MDD from -45.7% to -24.4% (+21.3pp) but cut CAGR
+  from 25.8% to 7.8% (-18pp), measured against the v0 CW baseline — full
+  table in [`docs/notes/adaptive_overlay_dropped.md`](docs/notes/adaptive_overlay_dropped.md).
+  A Pareto-improving overlay remains an open problem).
 
 ---
 

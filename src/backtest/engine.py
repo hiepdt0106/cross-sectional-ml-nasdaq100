@@ -1182,22 +1182,28 @@ def deflated_sharpe_ratio(
             "is_significant": False,
         }
 
-    # Expected maximum Sharpe under the null (Euler-Mascheroni approximation)
+    # Expected maximum Sharpe under the null (Bailey & López de Prado 2014, eq. 6).
+    # The expression below is in z-score units; convert to ANNUALISED Sharpe units
+    # by scaling with sqrt(252 / n_days), since SR_daily ~ N(0, 1/T) under the null
+    # and SR_annual = SR_daily * sqrt(252).
     euler_mascheroni = 0.5772156649
     e_max_z = (
         (1.0 - euler_mascheroni) * sp_stats.norm.ppf(1.0 - 1.0 / n_trials)
         + euler_mascheroni * sp_stats.norm.ppf(1.0 - 1.0 / (n_trials * np.e))
     )
-    sr0 = e_max_z  # expected max SR (annualised, assuming daily)
+    sr0 = e_max_z * np.sqrt(252.0 / n_days)  # expected max SR, annualised
 
-    # Variance of the Sharpe estimator (Lo, 2002)
+    # Variance of the Sharpe estimator (Lo, 2002), annualised.
+    # Lo's formula gives Var(SR_daily); multiply by 252 to get annualised variance.
+    # The skew/kurtosis correction uses the DAILY Sharpe.
     sr = observed_sharpe
-    var_sr = (
+    sr_daily = sr / np.sqrt(252.0)
+    var_sr_ann = 252.0 * (
         1.0
-        - skew * sr
-        + (kurtosis_excess / 4.0) * sr ** 2
+        - skew * sr_daily
+        + (kurtosis_excess / 4.0) * sr_daily ** 2
     ) / (n_days - 1)
-    se_sr = max(np.sqrt(var_sr), 1e-12)
+    se_sr = max(np.sqrt(var_sr_ann), 1e-12)
 
     # Test statistic: how far observed is above the expected maximum
     psr_stat = (sr - sr0) / se_sr

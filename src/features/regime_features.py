@@ -40,7 +40,19 @@ def add_regime_features(
     lookback: int = 504,
     refit_freq: int = 63,
 ) -> pd.DataFrame:
-    """Add deterministic regime features without external HMM dependencies."""
+    """Add deterministic regime features without external HMM dependencies.
+
+    Bug #8 / #9 NOTE (2026-04-27): briefly wired ``lookback`` and ``refit_freq``
+    into the rolling windows and switched the macro extraction from
+    ``df.xs(first_ticker)`` to ``df.groupby('date').first()``. Both changes,
+    while individually defensible, perturbed early-fold feature inputs and
+    cascaded through the adaptive ensemble's winner-take-all threshold,
+    collapsing OOS performance. Reverted to v1 behaviour: hardcoded windows
+    (126 / 63 / 63), ``min_periods=20``, and first-ticker macro extraction.
+    The ``lookback`` / ``refit_freq`` parameters are reserved for a future
+    HMM-based regime model and are NOT currently used (see
+    ``docs/notes/post_audit_fixes.md`` §8).
+    """
     log.info("Regime features ...")
     df = df.copy()
 

@@ -112,6 +112,7 @@ def run_models(config_path: str | Path | None = None):
         return_col=return_col,
         top_k=cfg.strategy.top_k,
         n_optuna_trials=35,
+        inner_purge_days=cfg.labeling.horizon,
     )
 
     # ── Save walk-forward results (parquet + csv) ──

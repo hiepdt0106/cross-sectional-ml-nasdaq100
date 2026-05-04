@@ -58,7 +58,22 @@ def test_run_models_requires_aligned_alpha_targets(tmp_path) -> None:
 
     source_root = Path(__file__).resolve().parents[1]
     root = tmp_path / 'proj'
-    shutil.copytree(source_root, root)
+    shutil.copytree(
+        source_root,
+        root,
+        ignore=shutil.ignore_patterns(
+            '.git',
+            '.venv',
+            'venv',
+            'env',
+            '.pytest_cache',
+            '__pycache__',
+            '.codex_tmp*',
+            '.env',
+            'data',
+            'outputs',
+        ),
+    )
     (root / 'data' / 'processed').mkdir(parents=True, exist_ok=True)
 
     dates = pd.date_range('2024-01-01', periods=4, freq='B')

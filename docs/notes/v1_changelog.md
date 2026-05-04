@@ -932,3 +932,60 @@ v2 charter with explicit target/universe redesign.
 - `data/edgar_fundamentals/` (10 ticker parquets from POC)
 - `data/processed/fs3_poc_ic_yearly.csv`, `fs3_poc_ic_monthly.csv`
 - `logs/fs3_poc.log`
+
+
+## 14. Benchmark date alignment fix + headline rerun (2026-05-04)
+
+### Problem identified by external review
+`scripts/run_backtest.py` was passing `pred_full.index.get_level_values("date").unique()`
+(only 1,476 dates — the days where predictions exist) to `compute_benchmark_etf()`,
+while the ML strategy's hold dates extend to 1,536 (the union of all trading
+days between rebalance dates, plus the trailing window after the last
+rebalance). Result: ML metrics were computed on 1,536 days while benchmarks
+used 1,476 — same period, different grids.
+
+### Fix
+After `eq_full` is computed, pass `eq_full.index` to all three
+`compute_benchmark_*` calls. Verified empirically:
+`new_qqq.index == eq_full.index = True`. All five strategies now share a
+single 1,536-day trading-day grid.
+
+Same patch added `slippage_bps` parameter to `run_random_benchmark()` so the
+random benchmark uses the same 12 bps total cost as ML (was 10 bps —
+random was getting a 2-bps tail-wind).
+
+### Headline impact (2026-05-04 rerun, all training deterministic)
+
+| Metric | v1 sealed (pred-date grid) | post-alignment (hold-date grid) |
+|---|---:|---:|
+| ML_Full_CW CAGR | 34.1% | 34.1% |
+| ML_Full_CW Sharpe | 0.91 | 0.91 |
+| ML_Full_CW MDD | −37.6% | −37.6% |
+| BH_QQQ CAGR | 18.6% | 18.5% |
+| BH_QQQ Sharpe | 0.67 | 0.65 |
+| **Annual alpha** | **+12.3%** | **+15.2%** |
+| **HAC p-value** | 0.11 | **0.039** ✓ 5% |
+| **Centered bootstrap p-value** | 0.08 | **0.032** ✓ 5% |
+| Random benchmark z-score | 3.83 | 6.06 |
+
+The ML equity curves are unchanged (predictions and engine are deterministic);
+the alpha p-value moved because the alpha test is now apples-to-apples on a
+shared trading-day index. The Sharpe CIs are unchanged in width (~0.40 SE on
+a 6-year window) — only the point estimate of the QQQ benchmark moved
+slightly, and the alpha t-stat reflects the now-honest comparison.
+
+### Doc updates
+- `README.md` §1 — headline table, period, Sharpe CI, cost-sensitivity all
+  re-pinned to the new grid.
+- `README.md` §7 — Limitation #1 rewritten ("single-strategy alpha clears 5%;
+  multi-test deflated Sharpe does not"), no longer claims overall not significant.
+- `docs/DEFENSE_GUIDE_VI.md` — same.
+- `scripts/export_reporting.py` — sensitivity strategy label fixed
+  (`ML_Full_EW` → `ML_Full_CW`) so the reporting mart matches what
+  `run_analysis.py` actually runs (production CW).
+
+### v1 sealed state (post-alignment)
+`ML_Full_CW`: CAGR 34.1% / Sharpe 0.91 / MDD −37.6% / Calmar 0.91 / α +15.2%
+HAC p = 0.039 / bootstrap p = 0.032. Single-strategy alpha is now significant
+at 5%. Deflated Sharpe still requires expanded sample period or more signal
+to clear under broader trial assumptions (p_DSR = 0.082 at 3 trials, 0.146 at 5).

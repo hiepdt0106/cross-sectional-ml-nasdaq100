@@ -63,6 +63,11 @@ def add_cross_sectional_features(df: pd.DataFrame) -> pd.DataFrame:
         log.warning("  Missing adj_high/adj_low -> skip close_position")
 
     if "price_sma200" in df.columns:
+        # Bug #10 NOTE (2026-04-27): briefly masked NaN before the comparison
+        # so warmup days produce NaN breadth instead of 0.0. The change
+        # perturbed early-fold breadth values and cascaded through the
+        # adaptive ensemble. Reverted to v1 behaviour (NaN > 0 = False
+        # during the SMA-200 warmup). See docs/notes/post_audit_fixes.md §10.
         breadth = (df["price_sma200"] > 0).groupby(level="date").mean().astype(float)
         df["market_breadth_200d"] = df.index.get_level_values("date").map(breadth.to_dict())
     else:

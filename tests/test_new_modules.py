@@ -75,7 +75,7 @@ class TestConfigLayout:
         cfg = load_config("configs/base_v2.yaml")
         assert len(cfg.data.tickers) > 50
         assert cfg.treasury.ffill_limit == 5
-        assert cfg.random_benchmark.n_iterations == 200
+        assert cfg.random_benchmark.n_iterations == 50
 
     def test_treasury_config(self):
         from src.config import load_config

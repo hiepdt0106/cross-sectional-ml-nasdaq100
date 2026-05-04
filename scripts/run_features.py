@@ -106,6 +106,24 @@ def run_features(config_path: str | Path | None = None) -> pd.DataFrame:
     save(df, out_path)
     log.info(f"Saved: {out_path}")
 
+    # Minimal committed panel for API-free backtest reruns. This avoids
+    # shipping the full feature matrix while preserving the price/benchmark
+    # fields required by scripts/run_backtest.py.
+    backtest_cols = [
+        "adj_open",
+        "adj_close",
+        "bench_close",
+        "p_high_vol",
+        "market_breadth_200d",
+        "vxn_zscore",
+        "yield_spread_zscore",
+        *cfg.strategy.signal_anchor_features,
+    ]
+    backtest_cols = [c for c in dict.fromkeys(backtest_cols) if c in df.columns]
+    backtest_panel_path = cfg.dir_processed / "backtest_panel.parquet"
+    save(df[backtest_cols], backtest_panel_path)
+    log.info(f"Backtest panel ({len(backtest_cols)} cols): {backtest_panel_path}")
+
     # Save feature list with is_macro flag
     feat_info = pd.DataFrame({
         "feature": feature_cols + raw_date_cols + dropped_redundant,

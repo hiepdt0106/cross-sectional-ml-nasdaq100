@@ -24,6 +24,7 @@ data/processed/*
 # without a Tiingo API key (see README §Reproducibility).
 # Note: parent dir uses /* (not /) so the negation below can take effect.
 !data/processed/predictions_ens_full.parquet
+!data/processed/backtest_panel.parquet
 
 # Outputs — ship results, exclude only runtime logs
 outputs/logs/
@@ -42,6 +43,8 @@ logs/
 
 # Local-only artifacts
 test_report.txt
+.codex_tmp*/
+.pip_tmp*/
 
 # Experiments — keep code, configs, and summary CSVs; drop heavyweight logs
 experiments/*/results/*.log

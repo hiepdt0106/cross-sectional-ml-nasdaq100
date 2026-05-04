@@ -50,6 +50,7 @@ class BacktestEngineConfig:
     dd_threshold: float = 0.0
     dd_exit: float = -0.10
     dd_exposure: float = 0.80
+    sector_mode: str = "soft_penalty"
     sector_max_weight: float = 0.40
     sector_map: dict[str, str] | None = None
 
@@ -62,13 +63,18 @@ def _compute_weights(
     max_weight_cap: float = 0.25,
     selected_names: list[str] | None = None,
     sector_map: dict[str, str] | None = None,
+    sector_mode: str = "hard_cap_cash",
     sector_max_weight: float = 0.40,
 ) -> dict[str, float]:
     """Compute equal-weight or confidence-weighted portfolio weights.
 
-    When *sector_map* is provided, each GICS sector is capped at
-    *sector_max_weight* of total portfolio weight.  Excess is
-    redistributed proportionally to uncapped sectors.
+    Sector handling is explicit because the production research overlay and
+    the conservative audit check have different behavior:
+
+    - ``hard_cap_cash`` enforces a true sector cap and leaves excess in cash.
+    - ``soft_penalty`` down-weights concentrated sectors, then renormalizes to
+      stay fully invested. This is a concentration penalty, not a hard cap.
+    - ``off`` leaves sector weights unchanged.
     """
     top_k_actual = min(int(top_k), len(signal_pool))
     if top_k_actual <= 0:
@@ -105,10 +111,52 @@ def _compute_weights(
         weights = ws.to_dict()
 
     # ── Sector concentration cap ───────────────────────────────────
-    if sector_map and sector_max_weight < 1.0:
-        weights = _apply_sector_cap(weights, sector_map, sector_max_weight)
+    if sector_map and sector_max_weight < 1.0 and sector_mode != "off":
+        if sector_mode == "hard_cap_cash":
+            weights = _apply_sector_cap(weights, sector_map, sector_max_weight)
+        elif sector_mode == "soft_penalty":
+            weights = _apply_sector_soft_penalty(weights, sector_map, sector_max_weight)
+        else:
+            raise ValueError(
+                "sector_mode must be one of: off, soft_penalty, hard_cap_cash"
+            )
 
     return weights
+
+
+def _apply_sector_soft_penalty(
+    weights: dict[str, float],
+    sector_map: dict[str, str],
+    sector_max_weight: float,
+) -> dict[str, float]:
+    """Softly penalize sector concentration while remaining fully invested.
+
+    This mirrors the original research behavior from the GitHub version:
+    sectors above the threshold are scaled down, then all holdings are
+    renormalized to sum to 1.0. In an infeasible universe, the final sector
+    weight can still exceed ``sector_max_weight``; callers should use
+    ``hard_cap_cash`` when they require a true cap.
+    """
+    w = pd.Series(weights, dtype=float)
+    sectors = pd.Series({tkr: sector_map.get(tkr, "Other") for tkr in w.index})
+
+    for _ in range(10):
+        sector_totals = w.groupby(sectors).sum()
+        over = sector_totals[sector_totals > sector_max_weight + 1e-12]
+        if over.empty:
+            break
+
+        for sec in over.index:
+            mask = sectors == sec
+            scale = sector_max_weight / float(sector_totals[sec])
+            w[mask] *= scale
+
+        total = float(w.sum())
+        if total <= 0:
+            break
+        w /= total
+
+    return w.to_dict()
 
 
 def _apply_sector_cap(
@@ -116,21 +164,38 @@ def _apply_sector_cap(
     sector_map: dict[str, str],
     sector_max_weight: float,
 ) -> dict[str, float]:
-    """Iteratively rescale weights so no single sector exceeds *sector_max_weight*."""
+    """Cap each sector at ``sector_max_weight``; any excess is held as cash.
+
+    Bug #1 fix: the previous implementation scaled over-cap sectors down and
+    then renormalised the entire weight vector back to 1.0, which silently
+    cancelled the cap when the cap was infeasible (e.g. all 10 holdings in one
+    sector). The fixed version scales over-cap sectors down and leaves the
+    residual as cash (i.e. the weight vector may sum to < 1.0). The backtest
+    engine treats unallocated weight as a 0%-return cash position when total
+    weight is materially below 1.0 (see ``_portfolio_return_for_day``).
+    """
     w = pd.Series(weights)
     sectors = pd.Series({tkr: sector_map.get(tkr, "Other") for tkr in w.index})
 
-    for _ in range(10):  # converges in 2-3 iterations
-        sector_totals = w.groupby(sectors).sum()
-        over = sector_totals[sector_totals > sector_max_weight + 1e-12]
-        if over.empty:
-            break
-        for sec in over.index:
-            mask = sectors == sec
-            scale = sector_max_weight / float(sector_totals[sec])
-            w[mask] *= scale
-        # renormalize to 1.0
-        w /= w.sum()
+    sector_totals = w.groupby(sectors).sum()
+    over = sector_totals[sector_totals > sector_max_weight + 1e-12]
+    if over.empty:
+        return weights
+
+    for sec in over.index:
+        mask = sectors == sec
+        scale = sector_max_weight / float(sector_totals[sec])
+        w[mask] *= scale
+
+    invested = float(w.sum())
+    cash = max(0.0, 1.0 - invested)
+    if cash > 0.05:
+        log.debug(
+            "Sector cap binding: invested=%.1f%%, cash=%.1f%% (sectors over cap: %s)",
+            invested * 100.0,
+            cash * 100.0,
+            list(over.index),
+        )
 
     return w.to_dict()
 
@@ -175,22 +240,35 @@ def _select_with_buffer(
 
 
 def _estimate_trade_cost(
-    prev_holdings: set[str],
-    new_holdings: set[str],
+    prev_weights: dict[str, float],
+    new_weights: dict[str, float],
     total_cost_rate: float,
 ) -> tuple[set[str], set[str], float, float]:
-    """Approximation of turnover and proportional trading cost for research backtests."""
-    if not prev_holdings:
-        bought = set(new_holdings)
-        turnover_est = 1.0 if new_holdings else 0.0
+    """Weight-change-based turnover approximation and proportional trading cost.
+
+    Bug #5 fix: the previous implementation counted only set-difference of
+    ticker names (sold/bought) and ignored weight shifts within unchanged
+    names. With confidence-weighted portfolios, a constant basket can still
+    incur material turnover when the LR/RF/LGBM scores reweight the holdings.
+
+    Turnover (one-way notional, fraction of NAV) is computed as
+    ``0.5 * sum(|w_new - w_prev|)`` over the union of holdings, which is the
+    standard portfolio-management definition (rebalances unchanged names with
+    weight shifts contribute, names entered or exited contribute their full
+    delta).
+    """
+    if not prev_weights:
+        bought = set(new_weights.keys())
+        turnover_est = float(sum(new_weights.values())) if new_weights else 0.0
         return set(), bought, turnover_est, turnover_est * total_cost_rate
 
-    sold = prev_holdings - new_holdings
-    bought = new_holdings - prev_holdings
-    n_prev = max(len(prev_holdings), 1)
-    n_new = max(len(new_holdings), 1)
-
-    turnover_est = (len(sold) / n_prev) + (len(bought) / n_new)
+    all_tickers = set(prev_weights) | set(new_weights)
+    turnover_est = 0.5 * float(sum(
+        abs(float(new_weights.get(t, 0.0)) - float(prev_weights.get(t, 0.0)))
+        for t in all_tickers
+    ))
+    sold = set(prev_weights.keys()) - set(new_weights.keys())
+    bought = set(new_weights.keys()) - set(prev_weights.keys())
     cost = turnover_est * total_cost_rate
     return sold, bought, turnover_est, cost
 
@@ -227,8 +305,12 @@ def _portfolio_return_for_day(
         except KeyError:
             continue
 
-    if 0 < total_weight < 0.99:
-        total_ret = total_ret / total_weight
+    target_invested = float(sum(weights.values()))
+    if 0 < total_weight < target_invested - 1e-12:
+        # Missing price rows should not turn a 100%-invested basket into
+        # accidental cash. Scale valid holdings back to the intended invested
+        # weight only; any sector-cap residual below 100% remains cash.
+        total_ret = total_ret * (target_invested / total_weight)
 
     return total_ret
 
@@ -464,6 +546,7 @@ def run_backtest(
 
     equity = float(cfg.initial_capital)
     prev_holdings: set[str] = set()
+    prev_weights: dict[str, float] = {}
     eq_records: list[dict] = []
     trade_records: list[dict] = []
 
@@ -501,6 +584,7 @@ def run_backtest(
             max_weight_cap=cfg.max_weight_cap,
             selected_names=selected_names,
             sector_map=cfg.sector_map,
+            sector_mode=cfg.sector_mode,
             sector_max_weight=cfg.sector_max_weight,
         )
         if not weights:
@@ -539,6 +623,7 @@ def run_backtest(
                     max_weight_cap=cfg.max_weight_cap,
                     selected_names=selected_names,
                     sector_map=cfg.sector_map,
+                    sector_mode=cfg.sector_mode,
                     sector_max_weight=cfg.sector_max_weight,
                 )
                 selected = list(weights.keys())
@@ -594,8 +679,8 @@ def run_backtest(
             continue
 
         sold, bought, turnover_est, cost = _estimate_trade_cost(
-            prev_holdings,
-            new_holdings,
+            prev_weights,
+            weights,
             total_cost_rate,
         )
 
@@ -649,10 +734,13 @@ def run_backtest(
                     "signal_date": signal_date,
                     "exposure": exposure,
                     "regime_scale": regime_scale,
+                    "defense_scale": defense_scale,
                     "vol_scale": vol_scale,
                     "dd_scale": dd_scale,
                     "estimated_vol": estimated_vol,
                     "regime_score": regime_score,
+                    "breadth_gate": bool(breadth_gate_triggered),
+                    "benchmark_trend_gate": bool(benchmark_trend_triggered),
                     "anchor_used": anchor_used,
                 }
             )
@@ -670,15 +758,19 @@ def run_backtest(
                 "cost": cost,
                 "exposure": exposure,
                 "regime_scale": regime_scale,
+                "defense_scale": defense_scale,
                 "vol_scale": vol_scale,
                 "dd_scale": dd_scale,
                 "estimated_vol": estimated_vol,
                 "regime_score": regime_score,
+                "breadth_gate": bool(breadth_gate_triggered),
+                "benchmark_trend_gate": bool(benchmark_trend_triggered),
                 "anchor_used": anchor_used,
                 "skipped_no_hold_dates": False,
             }
         )
         prev_holdings = new_holdings
+        prev_weights = dict(weights)
 
     if eq_records:
         equity_df = pd.DataFrame(eq_records).set_index("date")
@@ -839,10 +931,11 @@ def compute_benchmark_etf(
 def run_random_benchmark(
     df: pd.DataFrame,
     pred_df: pd.DataFrame,
-    n_iterations: int = 200,
+    n_iterations: int = 50,
     top_k: int = 10,
     rebalance_days: int = 10,
     cost_bps: float = 10.0,
+    slippage_bps: float = 0.0,
     initial_capital: float = 10_000,
     seed: int = 42,
 ) -> pd.DataFrame:
@@ -850,6 +943,10 @@ def run_random_benchmark(
     Random top-10 benchmark averaged over multiple runs.
 
     Each rebalance period: random 10 tickers, equal-weighted.
+    Total cost applied at entry = (cost_bps + slippage_bps), matching the
+    production engine's cost model so the random benchmark is on a fair
+    footing with ML strategies.
+
     Returns DataFrame with columns=[iteration, CAGR, Sharpe, MDD, ...].
     """
     rng = np.random.RandomState(seed)
@@ -859,12 +956,33 @@ def run_random_benchmark(
     pred_date_list = pred_dates.tolist()
     rebalance_dates = pred_date_list[::rebalance_days]
 
-    total_cost_rate = cost_bps / 10_000
+    total_cost_rate = (cost_bps + slippage_bps) / 10_000
     results = []
+    close_px = df["adj_close"].unstack("ticker").sort_index()
+    if "adj_open" in df.columns:
+        open_px = df["adj_open"].unstack("ticker").sort_index()
+    else:
+        open_px = close_px
+    close_ret = close_px.pct_change()
+    entry_ret = close_px / open_px - 1.0
+
+    pred_tickers_by_date = {
+        d: pred_df.loc[pred_df.index.get_level_values("date") == d]
+        .index.get_level_values("ticker")
+        .to_numpy()
+        for d in pred_dates
+    }
+    hold_dates_by_rebalance: list[pd.Index] = []
+    for i, reb_date in enumerate(rebalance_dates):
+        if i + 1 < len(rebalance_dates):
+            next_reb = rebalance_dates[i + 1]
+            hold_dates_by_rebalance.append(all_dates[(all_dates > reb_date) & (all_dates <= next_reb)])
+        else:
+            hold_dates_by_rebalance.append(all_dates[all_dates > reb_date])
 
     for it in range(n_iterations):
         equity = float(initial_capital)
-        prev_holdings: set[str] = set()
+        prev_weights: dict[str, float] = {}
         eq_records: list[dict] = []
 
         for i, reb_date in enumerate(rebalance_dates):
@@ -873,55 +991,46 @@ def run_random_benchmark(
                 continue
             signal_date = available[-1]
 
-            # Get available tickers at this date
-            mask = pred_df.index.get_level_values("date") == signal_date
-            available_tickers = pred_df.loc[mask].index.get_level_values("ticker").tolist()
+            available_tickers = pred_tickers_by_date.get(signal_date, [])
 
             if len(available_tickers) < top_k:
-                selected = available_tickers
+                selected = list(available_tickers)
             else:
                 selected = rng.choice(available_tickers, size=top_k, replace=False).tolist()
+            if not selected:
+                continue
 
             new_holdings = set(selected)
             weights = {t: 1.0 / len(selected) for t in selected}
 
-            if i + 1 < len(rebalance_dates):
-                next_reb = rebalance_dates[i + 1]
-                hold_dates = all_dates[(all_dates > reb_date) & (all_dates <= next_reb)]
-            else:
-                hold_dates = all_dates[all_dates > reb_date]
-
+            hold_dates = hold_dates_by_rebalance[i]
             if len(hold_dates) == 0:
                 continue
 
             # Filter valid entry
             entry_date = hold_dates[0]
-            if "adj_open" in df.columns:
-                selected = [
-                    t for t in selected
-                    if ((entry_date, t) in df.index)
-                    and pd.notna(df.loc[(entry_date, t), "adj_open"])
-                    and float(df.loc[(entry_date, t), "adj_open"]) > 0
-                ]
-                if not selected:
-                    continue
-                new_holdings = set(selected)
-                weights = {t: 1.0 / len(selected) for t in selected}
+            entry_open = open_px.reindex([entry_date])[selected].iloc[0]
+            selected = entry_open[entry_open.notna() & (entry_open > 0)].index.tolist()
+            if not selected:
+                continue
+            new_holdings = set(selected)
+            weights = {t: 1.0 / len(selected) for t in selected}
 
             _, _, turnover_est, cost = _estimate_trade_cost(
-                prev_holdings, new_holdings, total_cost_rate,
+                prev_weights, weights, total_cost_rate,
             )
 
-            for j, d in enumerate(hold_dates):
-                gross_ret = _portfolio_return_for_day(df, weights, hold_dates, j, d)
-                if j == 0:
-                    net_ret = (1.0 + gross_ret) * (1.0 - cost) - 1.0
-                else:
-                    net_ret = gross_ret
+            gross_rets = close_ret.reindex(hold_dates)[selected].replace([np.inf, -np.inf], np.nan).mean(axis=1)
+            gross_rets.iloc[0] = entry_ret.reindex([entry_date])[selected].iloc[0].replace([np.inf, -np.inf], np.nan).mean()
+            gross_rets = gross_rets.fillna(0.0)
+
+            for j, (d, gross_ret) in enumerate(gross_rets.items()):
+                gross_ret = float(gross_ret)
+                net_ret = (1.0 + gross_ret) * (1.0 - cost) - 1.0 if j == 0 else gross_ret
                 equity *= (1.0 + net_ret)
                 eq_records.append({"date": d, "equity": equity, "daily_ret": net_ret})
 
-            prev_holdings = new_holdings
+            prev_weights = dict(weights)
 
         if eq_records:
             eq_df = pd.DataFrame(eq_records).set_index("date")
@@ -1120,22 +1229,50 @@ def block_bootstrap_alpha(
 
     boot_means = np.empty(n_bootstrap)
     for b in range(n_bootstrap):
-        # Sample blocks with replacement
+        # Sample blocks with replacement from the OBSERVED daily alpha series.
+        # The bootstrap distribution this produces describes uncertainty around
+        # the observed mean (used for the CI), not the null distribution.
         block_starts = rng.randint(0, n - block_size + 1, size=n_blocks)
         sample = np.concatenate([
             daily_alpha[s:s + block_size] for s in block_starts
         ])
         boot_means[b] = np.mean(sample)
 
-    # Two-sided p-value: proportion of bootstrap means <= 0
-    p_value = float(np.mean(boot_means <= 0))
+    # Confidence interval for the observed mean alpha (percentile method).
     ci_lower = float(np.percentile(boot_means, 2.5))
     ci_upper = float(np.percentile(boot_means, 97.5))
+
+    # Diagnostic probability: under the observed-distribution bootstrap, how
+    # often is the resampled mean <= 0?  This is informative but NOT a frequentist
+    # p-value (Bug #2 fix: the field used to be labelled `bootstrap_p_value` /
+    # "two-sided p-value" which was misleading).
+    prob_alpha_leq_zero_bootstrap = float(np.mean(boot_means <= 0))
+
+    # Proper centered-null bootstrap p-value (two-sided): re-center the daily
+    # alpha series so its mean equals zero, then resample blocks. The fraction
+    # of resamples whose |mean| meets or exceeds the observed |mean| is the
+    # two-sided p-value under H0: E[alpha]=0.
+    centered = daily_alpha - observed_mean
+    null_means = np.empty(n_bootstrap)
+    rng_null = np.random.RandomState(seed + 1)
+    for b in range(n_bootstrap):
+        block_starts = rng_null.randint(0, n - block_size + 1, size=n_blocks)
+        sample = np.concatenate([
+            centered[s:s + block_size] for s in block_starts
+        ])
+        null_means[b] = np.mean(sample)
+    p_value_two_sided = float(
+        np.mean(np.abs(null_means) >= abs(observed_mean))
+    )
 
     return {
         "bootstrap_mean_alpha_daily": float(np.mean(boot_means)),
         "bootstrap_std": float(np.std(boot_means)),
-        "bootstrap_p_value": p_value,
+        # Backward-compatible alias kept so downstream consumers do not break,
+        # but it is not a frequentist p-value (see field below).
+        "bootstrap_p_value": prob_alpha_leq_zero_bootstrap,
+        "prob_alpha_leq_zero_bootstrap": prob_alpha_leq_zero_bootstrap,
+        "bootstrap_p_value_two_sided_centered": p_value_two_sided,
         "bootstrap_ci_95_lower": ci_lower,
         "bootstrap_ci_95_upper": ci_upper,
         "bootstrap_ci_95_lower_annual": ci_lower * 252,

@@ -26,6 +26,12 @@ def test_get_feature_cols_excludes_aligned_label_columns():
 
 
 def test_build_ensemble_frame_keeps_raw_score_scale_for_flat_models():
+    """When all model scores are inside [0,1], _build_ensemble_frame keeps the
+    raw probability scale (no rank-normalisation) so adaptive ensemble weights
+    fit on the raw blend at training time remain consistent with inference.
+    Per-model rank-normalisation kicks in only when scores escape [0,1].
+    See `docs/notes/post_audit_fixes.md` §11 for the design rationale.
+    """
     from src.models.train import _build_ensemble_frame
 
     date = pd.Timestamp("2024-01-05")

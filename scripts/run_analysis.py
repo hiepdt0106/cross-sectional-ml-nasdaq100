@@ -128,6 +128,7 @@ def plot_equity_curves(
     colors = {
         "ML Full EW": "#2196F3",
         "ML Full CW": "#4CAF50",
+        "B&H QQQ": "#FF9800",
         "B&H MCap Top-10": "#F44336",
         "B&H Full": "#9E9E9E",
     }
@@ -223,6 +224,10 @@ def run_analysis(config_path: str | Path | None = None):
 
     # Load optional benchmark outputs if present.
     try:
+        eq_bh_qqq = load(cfg.dir_outputs / "equity_benchmark_qqq.parquet")
+    except FileNotFoundError:
+        eq_bh_qqq = pd.DataFrame()
+    try:
         eq_bh_mcap = load(cfg.dir_outputs / "equity_benchmark_mcap10.parquet")
     except FileNotFoundError:
         eq_bh_mcap = pd.DataFrame()
@@ -256,6 +261,7 @@ def run_analysis(config_path: str | Path | None = None):
         hold_score_tolerance=cfg.strategy.hold_score_tolerance,
         signal_anchor_weight=cfg.strategy.signal_anchor_weight,
         signal_anchor_features=tuple(cfg.strategy.signal_anchor_features),
+        sector_mode=cfg.backtest.sector_mode,
         sector_max_weight=cfg.backtest.sector_max_weight,
         sector_map=SECTOR_MAP,
     )
@@ -318,6 +324,8 @@ def run_analysis(config_path: str | Path | None = None):
     equities = {"ML Full EW": eq_full}
     if len(eq_cw) > 0:
         equities["ML Full CW"] = eq_cw
+    if len(eq_bh_qqq) > 0:
+        equities["B&H QQQ"] = eq_bh_qqq
     if len(eq_bh_mcap) > 0:
         equities["B&H MCap Top-10"] = eq_bh_mcap
     if len(eq_bh_full) > 0:

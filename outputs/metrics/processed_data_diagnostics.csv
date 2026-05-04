@@ -1,0 +1,11 @@
+check,value
+treasury_proxy_detected,False
+feature::p_high_vol,"{'exists': True, 'non_na': 1.0, 'min': 0.05106610764600074, 'max': 0.9708854109347402, 'std': 0.18501597352356683, 'nunique': 2530}"
+feature::market_breadth_200d,"{'exists': True, 'non_na': 1.0, 'min': 0.0, 'max': 0.9558823529411765, 'std': 0.22667296004335327, 'nunique': 62}"
+feature::yield_spread_10y2y,"{'exists': True, 'non_na': 1.0, 'min': -1.0800000000000005, 'max': 1.5899999999999999, 'std': 0.5755019516171694, 'nunique': 653}"
+feature::yield_spread_zscore,"{'exists': True, 'non_na': 0.9768899334116725, 'min': -3.7208635120415847, 'max': 5.0, 'std': 1.492332411180053, 'nunique': 2490}"
+label::alpha_ret,"{'exists': True, 'non_na': 0.9964387792734649, 'min': -0.6949864713620411, 'max': 0.5435583510395641, 'std': 0.06496542149833037, 'nunique': 172541}"
+label::alpha_label,"{'exists': True, 'non_na': 0.9964387792734649, 'min': 0.0, 'max': 1.0, 'std': 0.35417065556191313, 'nunique': 2}"
+label::alpha_ext_label,"{'exists': True, 'non_na': 0.38100451779457867, 'min': 0.0, 'max': 1.0, 'std': 0.5000037811614972, 'nunique': 2}"
+label::tb_label,"{'exists': True, 'non_na': 0.9960815047021944, 'min': 0.0, 'max': 1.0, 'std': 0.4983770887633625, 'nunique': 2}"
+label::tb_return,"{'exists': True, 'non_na': 0.9960642172229394, 'min': -0.15259077005216962, 'max': 0.1758390539355097, 'std': 0.031174253308000423, 'nunique': 172822}"

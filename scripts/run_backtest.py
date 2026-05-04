@@ -82,6 +82,7 @@ def _engine_from_cfg(cfg, **overrides) -> BacktestEngineConfig:
         dd_threshold=cfg.backtest.dd_threshold,
         dd_exit=cfg.backtest.dd_exit,
         dd_exposure=cfg.backtest.dd_exposure,
+        sector_mode=cfg.backtest.sector_mode,
         sector_max_weight=cfg.backtest.sector_max_weight,
         sector_map=SECTOR_MAP,
     )
@@ -97,11 +98,22 @@ def run_all_backtests(config_path: str | Path | None = None):
     pred_full_path = cfg.dir_processed / "predictions_ens_full.parquet"
     pred_all_full_path = cfg.dir_processed / "predictions_all_full.parquet"
     dataset_path = cfg.dir_processed / "dataset_featured.parquet"
+    backtest_panel_path = cfg.dir_processed / "backtest_panel.parquet"
 
     log.info("Loading data ...")
-    df = load(dataset_path)
+    if dataset_path.exists():
+        df = load(dataset_path)
+    elif backtest_panel_path.exists():
+        log.info("dataset_featured.parquet not found; using committed backtest_panel.parquet")
+        df = load(backtest_panel_path)
+    else:
+        raise FileNotFoundError(
+            "Backtest requires either data/processed/dataset_featured.parquet "
+            "from the full pipeline or committed data/processed/backtest_panel.parquet. "
+            "predictions_ens_full.parquet alone contains model scores, not enough "
+            "price/benchmark history to recompute a backtest."
+        )
     pred_full = load(pred_full_path)
-    ml_dates = pred_full.index.get_level_values("date").unique()
 
     log.info("\n" + "═" * 60)
     log.info("▶ Strategy A: ML Top-10 Equal-Weight (Full, pure signal)")
@@ -122,12 +134,18 @@ def run_all_backtests(config_path: str | Path | None = None):
     eq_cw, trades_cw = run_backtest(df, pred_full, cfg_cw)
     save(eq_cw, cfg.dir_outputs / "equity_cw.parquet")
 
+    # Align benchmark date index with the ML equity index so headline metrics
+    # and alpha tests share the same trading-day grid. Without this, ML uses
+    # all_dates between rebalances (~1536 days) while benchmarks use only
+    # pred_dates (~1476 days), leaving them ~60 days apart.
+    bench_dates = eq_full.index
+
     log.info("\n" + "═" * 60)
     log.info("▶ Benchmark 1: Buy & Hold QQQ ETF (primary, no look-ahead)")
     log.info("═" * 60)
     eq_bh_qqq = compute_benchmark_etf(
         df,
-        ml_dates,
+        bench_dates,
         initial_capital=cfg.backtest.initial_capital,
         bench_col="bench_close",
     )
@@ -137,7 +155,7 @@ def run_all_backtests(config_path: str | Path | None = None):
     log.info("\n▶ Benchmark 2: Buy & Hold Top-10 Market Cap (look-ahead, reference only)")
     eq_bh_mcap = compute_benchmark_mcap_top10(
         df,
-        ml_dates,
+        bench_dates,
         mcap_tickers=cfg.benchmark_mcap.tickers,
         initial_capital=cfg.backtest.initial_capital,
     )
@@ -146,7 +164,7 @@ def run_all_backtests(config_path: str | Path | None = None):
     log.info("\n▶ Benchmark 3: Buy & Hold Full Universe")
     eq_bh_full = compute_benchmark(
         df,
-        ml_dates,
+        bench_dates,
         initial_capital=cfg.backtest.initial_capital,
     )
     save(eq_bh_full, cfg.dir_outputs / "equity_benchmark_full.parquet")
@@ -161,6 +179,7 @@ def run_all_backtests(config_path: str | Path | None = None):
         top_k=cfg.strategy.top_k,
         rebalance_days=cfg.strategy.rebalance_days,
         cost_bps=cfg.backtest.cost_bps,
+        slippage_bps=cfg.backtest.slippage_bps,
         initial_capital=cfg.backtest.initial_capital,
         seed=cfg.random_benchmark.seed,
     )

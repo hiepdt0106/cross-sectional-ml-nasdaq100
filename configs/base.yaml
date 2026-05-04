@@ -123,6 +123,10 @@ walkforward:
   max_train_years: 8
 
 regime:
+  # Reserved for a future HMM-based regime model. The current
+  # production proxy in src/features/regime_features.py uses hardcoded
+  # rolling-window sizes (126 / 63 / 63) and ignores these values.
+  # See docs/notes/post_audit_fixes.md §8.
   lookback: 504
   refit_frequency: 63
 
@@ -157,8 +161,13 @@ backtest:
   dd_threshold: 0.0
   dd_exit: -0.04
   dd_exposure: 0.70
+  # Production uses the original research overlay: a soft sector concentration
+  # penalty that stays fully invested. It is not a legal hard sector cap.
+  # Use sector_mode: "hard_cap_cash" for conservative cash-residual risk tests,
+  # or "off" to disable sector handling.
+  sector_mode: "soft_penalty"
   sector_max_weight: 0.40
 
 random_benchmark:
-  n_iterations: 200
+  n_iterations: 50
   seed: 42

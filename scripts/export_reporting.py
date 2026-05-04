@@ -321,7 +321,10 @@ def _build_sensitivity(metrics_dir: Path) -> pd.DataFrame:
         if first_col != parameter_col:
             df = df.rename(columns={first_col: parameter_col})
         df["scenario_type"] = scenario_name
-        df["strategy"] = "ML_Full_EW"
+        # Sensitivity sweeps in run_analysis.py inherit the production CW
+        # config (confidence_weighted=True), not EW. Tag accordingly so the
+        # reporting mart matches the actual run_analysis.py behaviour.
+        df["strategy"] = "ML_Full_CW"
         return df
 
     topk = one_file(metrics_dir / "sensitivity_topk.csv", "top_k", "parameter_value")

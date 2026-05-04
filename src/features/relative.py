@@ -90,6 +90,10 @@ def add_relative_features(df: pd.DataFrame) -> pd.DataFrame:
     # ══════════════════════════════════════════════════════════════
 
     if has_bench:
+        # Bug #9 NOTE (2026-04-27): briefly switched to groupby('date').first()
+        # for robustness; reverted to v1 first-ticker extraction (see
+        # docs/notes/post_audit_fixes.md §9). Dataset is reindexed to a
+        # complete grid upstream so first ticker is always present.
         first_ticker = df.index.get_level_values("ticker").unique()[0]
         bench_close_s = df.xs(first_ticker, level="ticker")["bench_close"]
         bench_ret_1d = _log_return(bench_close_s, 1)

@@ -92,6 +92,7 @@ class BacktestConfig:
     dd_threshold: float = -0.08
     dd_exit: float = -0.04
     dd_exposure: float = 0.70
+    sector_mode: str = "soft_penalty"
     sector_max_weight: float = 0.40
 
 
@@ -496,6 +497,13 @@ def _validate(raw: dict, config_path: Path | None = None) -> None:
         raise ValueError("backtest.dd_exposure must be in (0,1]")
     if dd_threshold < 0 and dd_exit < dd_threshold:
         raise ValueError("backtest.dd_exit must be >= backtest.dd_threshold")
+
+    sector_mode = str(backtest.get("sector_mode", "soft_penalty"))
+    if sector_mode not in {"off", "soft_penalty", "hard_cap_cash"}:
+        raise ValueError("backtest.sector_mode must be off, soft_penalty, or hard_cap_cash")
+    sector_max_weight = float(backtest.get("sector_max_weight", 0.40))
+    if not (0.0 < sector_max_weight <= 1.0):
+        raise ValueError("backtest.sector_max_weight must be in (0,1]")
 
 
 

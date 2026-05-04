@@ -2,6 +2,12 @@
 .git
 .gitignore
 
+# Secrets
+.env
+.env.*
+*.key
+*.pem
+
 # Python
 __pycache__
 *.pyc

@@ -223,3 +223,109 @@ class TestComputeWeights:
         pool = pd.Series([0.99, 0.51, 0.51], index=["A", "B", "C"])
         w = _compute_weights(pool, top_k=3, confidence_weighted=True, max_weight_cap=0.25)
         assert all(v <= 0.26 for v in w.values())  # small tolerance
+
+
+class TestSectorCapInfeasible:
+    """Bug #1 regression: when a single sector dominates the basket, the
+    sector cap must NOT be silently undone by post-cap renormalisation.
+    Excess weight must be left as cash (sum of weights < 1.0)."""
+
+    def test_sector_cap_infeasible_all_one_sector_keeps_cash(self):
+        from src.backtest.engine import _compute_weights
+
+        # 5 tickers, all classified Technology, equal-weight pool.
+        pool = pd.Series([0.9, 0.85, 0.8, 0.75, 0.7],
+                         index=["A", "B", "C", "D", "E"])
+        sector_map = {t: "Technology" for t in pool.index}
+        w = _compute_weights(
+            pool,
+            top_k=5,
+            confidence_weighted=False,
+            max_weight_cap=1.0,
+            sector_map=sector_map,
+            sector_max_weight=0.40,
+        )
+        tech_weight = sum(w.values())
+        assert tech_weight <= 0.40 + 1e-9, (
+            f"Sector cap violated: Technology = {tech_weight:.4f}, expected <= 0.40"
+        )
+        # Residual (1 - tech_weight) should be material cash, not zero.
+        assert tech_weight < 0.45, (
+            f"Sector cap was likely silently renormalised: invested = {tech_weight:.4f}"
+        )
+
+    def test_sector_cap_not_binding_keeps_full_investment(self):
+        """If no sector exceeds the cap, weights should still sum to 1.0."""
+        from src.backtest.engine import _compute_weights
+
+        pool = pd.Series([0.8, 0.7, 0.6, 0.5],
+                         index=["A", "B", "C", "D"])
+        sector_map = {"A": "Technology", "B": "Technology",
+                      "C": "Healthcare", "D": "Financials"}
+        w = _compute_weights(
+            pool,
+            top_k=4,
+            confidence_weighted=False,
+            max_weight_cap=1.0,
+            sector_map=sector_map,
+            sector_max_weight=0.60,
+        )
+        assert abs(sum(w.values()) - 1.0) < 1e-6
+
+    def test_soft_sector_penalty_stays_fully_invested(self):
+        """Production mode is a soft concentration penalty, not a hard cap."""
+        from src.backtest.engine import _compute_weights
+
+        pool = pd.Series([0.9, 0.85, 0.8, 0.75, 0.7],
+                         index=["A", "B", "C", "D", "E"])
+        sector_map = {t: "Technology" for t in pool.index}
+        w = _compute_weights(
+            pool,
+            top_k=5,
+            confidence_weighted=False,
+            max_weight_cap=1.0,
+            sector_map=sector_map,
+            sector_mode="soft_penalty",
+            sector_max_weight=0.40,
+        )
+        assert abs(sum(w.values()) - 1.0) < 1e-9
+
+    def test_sector_cap_cash_residual_not_renormalized_in_return(self):
+        from src.backtest.engine import _compute_weights, _portfolio_return_for_day
+
+        date = pd.Timestamp("2024-01-02")
+        idx = pd.MultiIndex.from_product([[date], ["A", "B", "C", "D", "E"]], names=["date", "ticker"])
+        df = pd.DataFrame({"adj_open": 100.0, "adj_close": 110.0}, index=idx)
+        pool = pd.Series([0.9, 0.85, 0.8, 0.75, 0.7], index=["A", "B", "C", "D", "E"])
+        sector_map = {t: "Technology" for t in pool.index}
+
+        weights = _compute_weights(
+            pool,
+            top_k=5,
+            confidence_weighted=False,
+            max_weight_cap=1.0,
+            sector_map=sector_map,
+            sector_max_weight=0.40,
+        )
+
+        assert abs(sum(weights.values()) - 0.40) < 1e-9
+        ret = _portfolio_return_for_day(df, weights, pd.Index([date]), 0, date)
+        assert abs(ret - 0.04) < 1e-12
+
+
+class TestTransactionCostWeightAware:
+    """Bug #5 regression: turnover must reflect WEIGHT changes, not just
+    set-difference of ticker names."""
+
+    def test_turnover_captures_weight_shift_in_unchanged_basket(self):
+        from src.backtest.engine import _estimate_trade_cost
+
+        prev = {"A": 0.9, "B": 0.1}
+        new = {"A": 0.1, "B": 0.9}  # SAME tickers, swapped weights
+        sold, bought, turnover, cost = _estimate_trade_cost(prev, new, total_cost_rate=0.001)
+        assert sold == set() and bought == set(), \
+            "No name should be marked sold/bought when basket is unchanged"
+        # |0.1 - 0.9| + |0.9 - 0.1| = 1.6, divided by 2 = 0.8 turnover (one-way notional)
+        assert abs(turnover - 0.8) < 1e-9, (
+            f"Weight-aware turnover should be 0.8, got {turnover:.4f}"
+        )

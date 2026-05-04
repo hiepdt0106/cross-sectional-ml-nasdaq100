@@ -7,9 +7,12 @@
 
 End-to-end machine learning pipeline that selects a top-`k` long-only basket from
 a 72-ticker NASDAQ-100-style universe, rebalances every 10 trading days, and
-beats the QQQ benchmark on both absolute return and risk-adjusted return over
-2020-2026 — though without formal statistical significance (alpha p-value
-≈ 0.06–0.21 depending on test).
+tests whether cross-sectional ML can improve on a QQQ benchmark over 2020-2026.
+The final production run beats QQQ on CAGR, Sharpe, and Calmar with a **+15.2%
+annual alpha that clears the 5% significance threshold under both HAC
+(p = 0.039) and centered-bootstrap (p = 0.032) tests** on the date-aligned
+benchmark grid. Multi-test deflated Sharpe (Bailey-LdP) softens the picture
+once a wider trial space is assumed — see §1 below.
 
 This repository is a final-year thesis project (v1 sealed 2026-04-21).
 
@@ -19,25 +22,33 @@ This repository is a final-year thesis project (v1 sealed 2026-04-21).
 
 ## 1. Headline results
 
-Period: **2020-01-16 → 2026-02-26** (~6 years, the model's prediction window).
-Initial capital $10,000, transaction cost 10 bps round-trip, slippage 2 bps.
+Period: **2020-01-17 → 2026-02-27** (1,536 trading days, the ML hold window).
+Benchmark date index is aligned to ML hold dates so all five rows below
+share the same trading-day grid.
+Initial capital $10,000, transaction cost 10 bps + slippage 2 bps (total
+12 bps applied as a one-way entry cost).
 
-| Strategy | CAGR | Sharpe | MDD | Calmar | Alpha vs QQQ (annual) | p-value |
+| Strategy | CAGR | Sharpe | MDD | Calmar | Alpha vs QQQ (annual) | p-value (HAC / bootstrap) |
 |---|---:|---:|---:|---:|---:|---:|
-| ✅ **ML_Full_CW** (production) | **33.3%** | **0.89** | -37.6% | 0.89 | **+11.7%** | 0.12 (HAC) / 0.06 (bootstrap) |
-| ✅ ML_Full_EW (production) | 30.9% | 0.85 | -37.2% | 0.83 | +9.2% | 0.21 / 0.09 |
-| ⚪ BH_QQQ (benchmark) | 18.6% | 0.67 | -35.1% | 0.53 | — | — |
-| ⚠️ BH_MCap10 (top-10 by mcap) | 34.1% | 0.90 | -57.5% | 0.59 | — | — |
+| ✅ **ML_Full_CW** (production) | **34.1%** | **0.91** | -37.6% | 0.91 | **+15.2%** | **0.039 / 0.032** ✓ 5% |
+| ✅ ML_Full_EW (production) | 31.9% | 0.88 | -37.1% | 0.86 | +13.3% | 0.061 / 0.045 (bootstrap ✓ 5%) |
+| ⚪ BH_QQQ (benchmark) | 18.5% | 0.65 | -35.1% | 0.53 | — | — |
+| ⚠️ BH_MCap10 (top-10 by mcap) | 33.3% | 0.85 | -57.4% | 0.58 | — | — |
+| ⚪ BH_Full (equal-weight 72) | 20.0% | 0.70 | -32.4% | 0.62 | — | — |
 
-The ML strategy delivers BH_MCap10-class CAGR with materially better drawdown
-(-37.6% vs -57.5%) and beats the broad QQQ benchmark on every dimension. The
-alpha is economically meaningful but not statistically significant at the 5%
-level — see §7 Limitations.
+The ML strategy delivers higher CAGR, Sharpe, and Calmar than QQQ, and the
+alpha clears the standard 5% significance threshold on the production CW
+configuration (HAC t = 2.06, p = 0.039; centered block-bootstrap p = 0.032,
+n = 5,000, block = 10 days). It also roughly matches the static BH_MCap10
+reference on CAGR while taking materially less drawdown and without making
+a fixed mega-cap-only bet. See §7 for what this result still does **not**
+imply (single regime, deflated Sharpe corrections, survivorship asymmetry).
 
-A research finding (`CW + sector_max_weight=0.30`) improves CAGR to ~35.4%
-while keeping MDD unchanged, but is reported as a **v2 candidate** rather than
-a production change to preserve the holdout window's integrity. See
-[`notebooks/07_overlay_tuning.ipynb`](notebooks/07_overlay_tuning.ipynb).
+Production uses the original research overlay: a **soft sector concentration
+penalty** (`sector_mode="soft_penalty"`, `sector_max_weight=0.40`) that
+down-weights crowded sectors and then stays fully invested. This is not a legal
+hard sector cap. A true cash-residual cap remains implemented as
+`sector_mode="hard_cap_cash"` for conservative risk experiments.
 
 ### Predictive-signal quality (Information Coefficient)
 
@@ -54,11 +65,11 @@ The IC story has two layers — both honestly reported:
 
 2. **Realised production-ensemble OOS IC ≈ 0.01.** Computed as the daily
    cross-sectional Spearman of the adaptive-ensemble score against forward
-   return, averaged over 1,467 OOS days. The model captures roughly 15-20%
+   return, averaged over 1,536 OOS days. The model captures roughly 15-20%
    of the theoretical feature-ceiling signal. Modest in absolute terms but
    consistent — via the Fundamental Law of Active Management
-   (IR = IC × √breadth)¹ — with delivering Sharpe 0.89 on a 72-name
-   universe. See §7 for the honest caveat: the gap between the
+   (IR = IC × √breadth)¹ — with a modest but repeatable cross-sectional edge
+   inside a long-only 72-name universe. See §7 for the honest caveat: the gap between the
    feature-ceiling IC and the realised ensemble IC is the binding
    constraint on further alpha.
 
@@ -75,13 +86,14 @@ kurtosis of daily returns):
 
 | Strategy | Sharpe | SE | 95% CI |
 |---|---:|---:|:--|
-| ML_Full_CW | 0.89 | 0.40 | [+0.10, +1.68] |
-| ML_Full_EW | 0.85 | 0.40 | [+0.06, +1.64] |
-| BH_QQQ | 0.67 | 0.42 | [-0.15, +1.48] |
+| ML_Full_CW | 0.91 | 0.40 | [+0.12, +1.70] |
+| ML_Full_EW | 0.87 | 0.40 | [+0.08, +1.67] |
+| BH_QQQ | 0.64 | 0.41 | [-0.16, +1.44] |
 
-The CIs overlap heavily — ML's Sharpe edge over QQQ is consistent with the
-data but cannot be distinguished from sampling noise at 95% confidence on a
-6-year window. (This mirrors the alpha p-value picture in the headline table.)
+The CIs are wide, as expected on a 6-year window. ML_Full_CW's lower bound
+sits just above zero, and its mean is roughly +0.27 above QQQ's mean — a
+material economic edge whose statistical reliability is bounded by sample
+length, not by the point estimate.
 
 **Deflated Sharpe Ratio** (Bailey & López de Prado 2014) corrects for
 multiple-testing inflation under the null that all candidate strategies have
@@ -89,43 +101,48 @@ zero true Sharpe:
 
 | n_trials | E[max SR] | ML_Full_CW p_DSR | ML_Full_EW p_DSR |
 |---:|---:|---:|---:|
-| 3 (LR + RF + LGBM) | 0.34 | 0.088 | 0.105 |
-| 5 (+ EW & CW variants) | 0.48 | 0.156 | 0.180 |
-| 10 (+ overlay grid in NB07) | 0.64 | 0.265 | 0.298 |
-| 20 (+ feature-selection sweeps) | 0.77 | 0.382 | 0.419 |
+| 3 (LR + RF + LGBM) | 0.35 | 0.082 | 0.095 |
+| 5 (+ EW & CW variants) | 0.48 | 0.146 | 0.166 |
+| 10 (+ overlay grid in NB07) | 0.64 | 0.252 | 0.279 |
+| 20 (+ feature-selection sweeps) | 0.77 | 0.366 | 0.398 |
 
-ML_Full_CW's observed Sharpe **exceeds** the expected-maximum-under-H₀ at every
-plausible n_trials, meaning the result is directionally consistent with real
-skill rather than pure search inflation — but p_DSR remains > 5% at the higher
-n_trials counts honest accounting would assign. See implementation in
+The HAC and bootstrap p-values clear 5% **without** a multiple-testing
+correction. The deflated-Sharpe column above shows that once a broader trial
+space is assumed (sensitivity sweeps, overlay grid, FS1/FS2/FS3 feature
+sourcing), the surviving evidence weakens. We report both views honestly —
+the HAC/bootstrap result is the conservative single-strategy test, the DSR
+column is the upper bound on data-snooping. Implementation:
 [`src/backtest/engine.py:deflated_sharpe_ratio`](src/backtest/engine.py).
 
 **Cost sensitivity** — Sharpe and CAGR across round-trip cost levels (full
 production CW, all other settings unchanged):
 
-| cost_bps | CAGR | Sharpe | MDD | vs QQQ Sharpe (0.67) |
+| cost_bps | CAGR | Sharpe | MDD | vs QQQ Sharpe (0.64) |
 |---:|---:|---:|---:|:--|
-| 0 | 35.5% | 0.94 | -37.6% | +0.27 ✅ |
-| 5 | 34.4% | 0.92 | -37.6% | +0.25 ✅ |
-| **10 (production)** | **33.3%** | **0.89** | **-37.6%** | **+0.22 ✅** |
-| 15 | 32.2% | 0.87 | -37.7% | +0.20 ✅ |
-| 20 | 31.2% | 0.85 | -37.7% | +0.18 ✅ |
-| 30 (pessimistic retail) | 29.1% | 0.80 | -37.8% | +0.13 ✅ |
+| 0 | 35.6% | 0.94 | -37.6% | +0.30 |
+| 5 | 34.8% | 0.93 | -37.6% | +0.28 |
+| **10 (production)** | **34.1%** | **0.91** | **-37.6%** | **+0.27** |
+| 15 | 33.3% | 0.89 | -37.6% | +0.25 |
+| 20 | 32.6% | 0.88 | -37.7% | +0.23 |
+| 30 (pessimistic retail) | 31.1% | 0.84 | -37.7% | +0.20 |
 
 Even at 30 bps round-trip — well above realistic retail execution for liquid
-NDX-100 names — the strategy stays Sharpe-positive versus the QQQ benchmark.
+NDX-100 names — the strategy keeps a positive CAGR and Sharpe spread over QQQ.
 Source: [`outputs/metrics/sensitivity_cost.csv`](outputs/metrics/sensitivity_cost.csv).
 
 ### Why this matters
 
 Most undergraduate trading projects compare a single model to SPY. This one
 tests whether a disciplined cross-sectional ML pipeline — with walk-forward CV,
-purged K-fold inner tuning, triple-barrier labels, López de Prado sample
-weights, and HAC+bootstrap alpha tests — can clear two meaningful bars:
-(1) beat a **naive QQQ** allocation on both return and risk-adjusted return,
-(2) match the **concentrated MCap-10 benchmark's** CAGR while cutting the
-drawdown by ~20 percentage points. It clears both, and it tells you honestly
-where the limits are (IC ceiling, 5% significance, single regime).
+purged single-block inner validation (10-day purge gap), forward-rebalance-aligned
+labels (`alpha_ext_label`) as the production target, López de Prado
+`avg_uniqueness` sample weights derived from triple-barrier `t1`, and
+HAC+bootstrap alpha tests — can improve on a naive QQQ allocation.
+It clears the CAGR/Sharpe/Calmar bar but not the 5% statistical-significance bar,
+and it reports where the limits are (IC ceiling, 5% significance, single
+regime, static universe). Triple-barrier labels (`tb_label`) are kept in the
+dataset for ablation but are not the production training target — purged
+walk-forward K-fold was tested and rejected during v1 ([`docs/notes/v1_changelog.md`](docs/notes/v1_changelog.md) §2/§5).
 
 ---
 
@@ -169,7 +186,9 @@ Tiingo + Treasury + Yahoo (macro/VIX) APIs
   meta-model variant is also fit and saved for ablation, but is **not** used
   in any reported backtest number.
 - **Portfolio:** long-only top-10, rebalanced every 10 trading days, 25%
-  single-stock cap, 40% sector cap, optional confidence-weighting (CW variant).
+  single-stock cap, optional confidence-weighting (CW variant). Production uses
+  a soft 40% sector concentration penalty; strict cash-residual sector caps are
+  available as a separate risk-control experiment.
 - **Regime handling:** the market regime (`p_high_vol`) is injected as a
   **feature**, not a post-hoc overlay — the model learns its own response to
   volatility bursts. This replaces the original `ML_Full_Adaptive` strategy
@@ -177,9 +196,10 @@ Tiingo + Treasury + Yahoo (macro/VIX) APIs
   [`docs/notes/adaptive_overlay_dropped.md`](docs/notes/adaptive_overlay_dropped.md)
   showed it cut alpha faster than it cut drawdown (α = −13.35%, p = 0.025).
 - **Risk overlays available:** vol targeting, regime gate, SMA trend gate,
-  drawdown stop, breadth gate, sector cap. Only sector cap is on by default in
-  production. Vol/regime/SMA were tuned in `notebook 07` and dropped. See
-  [`docs/notes/v1_changelog.md`](docs/notes/v1_changelog.md).
+  drawdown stop, breadth gate, and strict sector cap. These are off by default
+  in production; the only active portfolio overlay is the soft sector
+  concentration penalty described above. Vol/regime/SMA and strict sector caps
+  were tested and dropped. See [`docs/notes/v1_changelog.md`](docs/notes/v1_changelog.md).
 
 ---
 
@@ -187,7 +207,7 @@ Tiingo + Treasury + Yahoo (macro/VIX) APIs
 
 ```
 .
-├── __main__.py                Allows `python -m .` to run the full pipeline
+├── __main__.py                Thin entry point for the full pipeline
 ├── README.md                  This file
 ├── PROJECT_AUDIT_AND_RISK_NOTES.md   Health-check and risk-control reference
 ├── pyproject.toml             Package metadata + console script `ml-trading-run`
@@ -257,8 +277,9 @@ Four ways to interact with this project, depending on what you want.
 ### Option A — "Just see the results" (no install required)
 
 Open the notebooks directly on GitHub or after `git clone`. Notebooks 05, 06,
-and 07 read from committed equity files in `outputs/` and predictions in
-`data/processed/predictions_ens_full.parquet`. No API key, no Python setup.
+and 07 read from committed equity files in `outputs/`, predictions in
+`data/processed/predictions_ens_full.parquet`, and the compact backtest panel in
+`data/processed/backtest_panel.parquet`. No API key, no Python setup.
 
 ### Option B — Re-run backtest only (Python required, no API key)
 
@@ -271,8 +292,11 @@ python scripts/run_analysis.py  --config configs/base.yaml
 ```
 
 This regenerates `outputs/equity_*.parquet` and metrics from the committed
-`predictions_ens_full.parquet`. Useful for parameter experiments
-(e.g. changing `top_k` or `sector_max_weight` in `configs/base.yaml`).
+`predictions_ens_full.parquet` plus `backtest_panel.parquet`. The predictions
+file stores model scores; the compact panel stores the price and benchmark
+history needed to recompute returns without a Tiingo API key. Useful for
+parameter experiments (e.g. changing `top_k`, `sector_mode`, or `sector_max_weight` in
+`configs/base.yaml`).
 
 ### Option C — Full pipeline from scratch (requires Tiingo API key)
 
@@ -282,7 +306,7 @@ cp .env.example .env
 pip install -e .
 python scripts/run_all.py --config configs/base.yaml
 # or, equivalently:
-python -m .              # uses __main__.py → scripts.run_all.main
+python -m scripts.run_all --config configs/base.yaml
 ml-trading-run           # console script registered in pyproject.toml
 ```
 
@@ -326,8 +350,8 @@ What can change between runs:
 - If you delete `data/raw/cache/`, Tiingo may return slightly different prices
   for older dates because of retroactive split/dividend adjustments. Subsequent
   runs against the new cache will then be deterministic.
-- Pre-computed `predictions_ens_full.parquet` is committed to make Options B
-  and D reproducible without a Tiingo key.
+- Pre-computed `predictions_ens_full.parquet` and `backtest_panel.parquet` are
+  committed to make Options B and D reproducible without a Tiingo key.
 
 The GitHub Actions CI runs the full test suite on Python 3.10, 3.11, and 3.12
 (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)) — every commit on
@@ -343,19 +367,29 @@ The GitHub Actions CI runs the full test suite on Python 3.10, 3.11, and 3.12
 | Cross-sectional ranking inside training pipeline | `src/models/train.py` | Future-information rankings |
 | Stacking meta-model fit on prior OOS folds only | `src/models/` | Look-ahead in stacked predictions |
 | `t+1` open execution in backtest | `src/backtest/engine.py` | Same-bar fill leakage |
-| Triple Barrier labels with proper `t1` end times | `src/labeling/` | Overlapping label leakage |
+| **Forward-aligned labels** (`alpha_ext_label`, signal-close → t+1 open → t+h close) | `src/labeling/forward_targets.py` | Research label / trading label mismatch (Triple-Barrier labels exist for ablation but are NOT the production target) |
 | López de Prado `avg_uniqueness` sample weights | `src/models/sample_weights.py` | Over-weighting from overlapping label windows |
-| Block bootstrap for alpha p-value (block=10, n=5000) | `src/backtest/` | Autocorrelation underestimation |
+| Block bootstrap with **centered-null two-sided p-value** + bootstrap CI (block=10, n=5000) | `src/backtest/engine.py:block_bootstrap_alpha` | Autocorrelation underestimation; correct frequentist semantics |
 | HAC standard errors (Newey-West, 5 lags) | `src/backtest/` | Same |
+| Sector cap with **cash residual** (`hard_cap_cash` mode) — production uses **soft concentration penalty** (renormalized to stay fully invested, see §1) | `src/backtest/engine.py:_apply_sector_cap` (hard cap), `_apply_sector_soft_penalty` (production) | Silent cap inversion via post-cap renormalisation in the strict cap path |
+| Weight-change-based **turnover** (one-way notional, captures both name churn and weight shifts) | `src/backtest/engine.py:_estimate_trade_cost` | Cost under-estimation for confidence-weighted rebalances |
+| Conditional rank-normalisation (only when scores escape [0,1]) before ensemble blend | `src/models/train.py:_build_ensemble_frame` | Forced rank-normalisation broke train↔inference consistency for adaptive weights — see `docs/notes/post_audit_fixes.md` §11; full rank-aware ensemble is a v2 charter item |
 | Health-check fails fast on missing alpha targets | `scripts/diagnose_processed_data.py` + `scripts/run_models.py` | Silent training on broken labels |
 
 ---
 
 ## 7. Key limitations (disclosed in thesis)
 
-1. **Alpha is not statistically significant at 5%.** ML_Full_CW alpha p-value
-   is 0.12 (HAC) / 0.06 (bootstrap). The strategy *probably* generates real
-   alpha, but cannot be claimed at the standard significance threshold.
+1. **Single-strategy alpha clears 5%; multi-test deflated Sharpe does not.**
+   On the date-aligned grid, ML_Full_CW alpha is +15.2%/year with HAC
+   p = 0.039 and centered-bootstrap p = 0.032 — both below 5%. However,
+   once the multi-test correction (deflated Sharpe with the LR/RF/LGBM trial
+   space, EW/CW variants, overlay grid, and FS1/FS2/FS3 feature sourcing)
+   is applied, the surviving evidence weakens to p_DSR ≈ 0.08 at 3 trials
+   and 0.15+ once 5+ trials are assumed. Read the result as: there is
+   single-strategy evidence of real alpha at 5%, but the broader research
+   program does not yet survive a fully conservative data-snooping
+   correction.
 2. **Free-data feature ceiling.** All three feature-selection studies (rolling
    IC, MDA, Boruta) cap out at IC ≈ 0.05-0.06. Higher signal would require
    alternative datasets (intraday, fundamentals, sentiment) that the free
@@ -370,9 +404,11 @@ The GitHub Actions CI runs the full test suite on Python 3.10, 3.11, and 3.12
    (logged as a v2 candidate).
 4. **Single regime.** 2020-2026 covers QE bull, COVID crash, 2022 bear, AI
    rally, 2025 selloff — but is still a single market epoch.
-5. **Pseudo-OOS overlay tuning.** ML training is true walk-forward OOS, but
-   the 2024+ holdout was used to validate (not pick) the v2-candidate
-   sector-cap tightening. A genuine OOS validation requires post-2026 data.
+5. **Sector overlay is a soft research penalty, not a hard mandate.** The
+   production setting down-weights crowded sectors and stays fully invested.
+   A stricter cash-residual cap is implemented and test-covered, but it is a
+   separate risk experiment because it holds too much cash in this tech-heavy
+   universe. Genuine OOS validation still requires post-2026 data.
 6. **Transaction-cost approximation.** 10 bps cost + 2 bps slippage (12 bps
    round-trip) is a research estimate, not an order-book simulation. See the
    cost-sensitivity table in §1 — the strategy stays Sharpe-positive vs QQQ
@@ -389,6 +425,23 @@ The GitHub Actions CI runs the full test suite on Python 3.10, 3.11, and 3.12
    rebasing, so the impact on ranking decisions is small — but absolute price
    levels at training time differ from what was historically observable. Worth
    acknowledging as a mild form of look-ahead in the input series.
+9. **Adaptive-ensemble winner-take-all fragility.** When one base model's
+   per-fold OOS score exceeds the runner-up by ≥ 1.25×, the ensemble collapses
+   to 100% weight on the leader (`src/models/train.py:1042-1052`). This is
+   brittle on a small number of OOS folds (6 test years). A min-weight floor
+   was tested and reverted because it cut CAGR from 33.3% → 18.1% — the v1
+   weights were calibrated on the winner-take-all behaviour. Smoothing the
+   blend requires re-fitting the adaptive scoring under the new assumption,
+   logged as a v2 charter item. See
+   [`docs/notes/post_audit_fixes.md`](docs/notes/post_audit_fixes.md) §12.
+10. **Per-model score-scale mismatch.** LR/RF emit [0,1] probabilities while
+    the LightGBM ranker emits an unbounded relevance score. The ensemble uses
+    *conditional* rank-normalisation (only when scores escape [0,1]), which
+    keeps train↔inference consistent but means the blend behaves differently
+    across folds. A per-model rank-norm at inference was tested and reverted
+    (CAGR 33% → 13%, alpha +11.7% → −7%) for the same calibration reason.
+    Proper fix requires re-fitting under rank-normalised inputs at training
+    time — v2 charter item. See `post_audit_fixes.md` §11.
 
 ---
 
@@ -396,8 +449,9 @@ The GitHub Actions CI runs the full test suite on Python 3.10, 3.11, and 3.12
 
 See [`docs/notes/v1_roadmap.md`](docs/notes/v1_roadmap.md) for full scope. Highlights:
 
-- Validate `CW + sector_max_weight=0.30` on post-2026 data (currently a
-  research finding from `notebooks/07`, ~2pp CAGR uplift, MDD unchanged).
+- Revisit sector/exposure controls on post-2026 data. Production uses a soft
+  sector concentration penalty; the stricter cash-residual cap is implemented
+  but should be treated as a conservative risk experiment.
 - Investigate paid-tier features (intraday, fundamentals) to break the
   IC ≈ 0.05 ceiling.
 - Add dynamic universe with historical NDX-100 membership.

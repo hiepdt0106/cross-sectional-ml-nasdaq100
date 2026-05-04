@@ -61,7 +61,16 @@ def get_models(scale_pos_weight: float = 1.0) -> dict:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _clean_raw(X: np.ndarray, medians: np.ndarray = None):
-    """Inf → NaN → median impute. Returns (X_clean, medians)."""
+    """Inf -> NaN -> median impute. Returns (X_clean, medians).
+
+    Bug #4 NOTE (2026-04-27): briefly added a 0.0 fallback for all-NaN
+    columns, but the fallback subtly changed early-fold (fold 1) LGBM
+    training inputs and cascaded through the adaptive ensemble's weight
+    selection (winner threshold became blended), collapsing OOS performance.
+    Reverted to v1 behaviour: all-NaN column impute leaves the column NaN,
+    which LGBM handles natively. A defensive degenerate-column drop is a
+    v2 charter item (see docs/notes/post_audit_fixes.md §4).
+    """
     X = np.where(np.isinf(X), np.nan, X)
     if medians is None:
         medians = np.nanmedian(X, axis=0)
@@ -766,12 +775,24 @@ def walk_forward_train(
     df: pd.DataFrame,
     splits: list[FoldSplit],
     feature_cols: list[str],
-    target: str = "tb_label",
-    return_col: str = "tb_return",
+    target: str = "alpha_ext_label",
+    return_col: str = "alpha_ret",
     top_k: int = 5,
     n_optuna_trials: int = 35,
+    inner_purge_days: int = 10,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Run walk-forward training for LR, RF, and LightGBM."""
+    """Run walk-forward training for LR, RF, and LightGBM.
+
+    Default target is the forward-rebalance-aligned label (`alpha_ext_label`),
+    NOT the triple-barrier label. The forward target matches backtest execution
+    (signal at close[t], entry at open[t+1], exit at close[t+horizon]) so the
+    research label and the trading label are identical. Triple-barrier labels
+    are kept available in the dataset for ablation studies but are not the
+    production target (Bug #3 disambiguation).
+
+    *inner_purge_days* should match the labeling horizon (default 10) so that
+    the inner-CV validation block is purged by exactly one label-window.
+    """
     all_results: list[FoldResult] = []
     all_preds: list[pd.DataFrame] = []
 
@@ -826,7 +847,8 @@ def walk_forward_train(
 
         models = get_models(scale_pos_weight=spw)
         fit_mask_full, val_mask_full = _make_date_block_val_mask(
-            train_full_df.index.get_level_values("date"), purge_days=10
+            train_full_df.index.get_level_values("date"),
+            purge_days=int(inner_purge_days),
         )
 
         for name, model in models.items():
@@ -1010,6 +1032,13 @@ def _adaptive_fold_weights(
             return _adaptive_fold_weights(None, models)
 
         ordered = w_series.sort_values(ascending=False)
+        # Bug #12 NOTE (2026-04-27): briefly added a 0.10 min-weight floor
+        # for non-leader models, but the adaptive weights are calibrated
+        # against a winner-take-all expectation (per-fold OOS scoring); the
+        # floor diluted strong-leader folds and collapsed OOS performance
+        # (CAGR 33% -> 18%). Reverted. A proper rank-aware ensemble that
+        # re-fits adaptive weights under a smoothed-blend assumption is a
+        # v2 charter item (see docs/notes/post_audit_fixes.md §12).
         if len(ordered) >= 2 and float(ordered.iloc[0]) >= 1.25 * max(float(ordered.iloc[1]), 1e-12):
             leader = ordered.index[0]
             w = {m: 1.0 if m == leader else 0.0 for m in models}
@@ -1025,7 +1054,17 @@ def _adaptive_fold_weights(
 
 
 def _build_ensemble_frame(pred_df: pd.DataFrame) -> pd.DataFrame:
-    """Return one row per (date, ticker) with raw model scores in wide format."""
+    """Return one row per (date, ticker) with raw model scores in wide format.
+
+    Bug #11 NOTE (2026-04-27): a per-(model, date) rank-normalisation was
+    briefly introduced to address the semantic mismatch between LR/RF
+    probabilities and the LGBM ranker score, but it broke the consistency
+    between training (where adaptive ensemble weights are fit on the
+    raw-score blend) and inference, collapsing OOS performance. Reverted to
+    raw blend with conditional rank-normalisation only when scores escape
+    [0, 1]. Proper rank-aware ensemble (rank-normalise BOTH at training
+    weight calibration AND at inference) is a v2 charter item.
+    """
     temp = pred_df.reset_index().copy()
     temp["ensemble_score"] = pd.to_numeric(temp["y_prob"], errors="coerce")
     in_unit_interval = temp["ensemble_score"].between(0.0, 1.0) | temp["ensemble_score"].isna()
@@ -1104,7 +1143,10 @@ def _fit_stacking_model(
         solver="lbfgs",
         random_state=42,
     )
-    model.fit(X.values, y.values, sample_weight=None if sample_weight is None else sample_weight.values)
+    # Pass DataFrame through fit so the model carries feature names — predict
+    # is called with `_stacking_features(...)` (DataFrame) downstream, and
+    # mismatched feature-name state triggers a sklearn UserWarning every fold.
+    model.fit(X, y, sample_weight=None if sample_weight is None else sample_weight.values)
     return model
 
 

@@ -32,6 +32,12 @@ def add_macro_features(
     if "vix" not in df.columns or "vxn" not in df.columns:
         raise ValueError("Columns 'vix' and 'vxn' are required")
 
+    # Bug #9 NOTE (2026-04-27): briefly switched to df.groupby('date').first()
+    # for robustness against missing rows in the leading ticker, but the
+    # change perturbed early-fold features and cascaded through the adaptive
+    # ensemble. Reverted to v1 first-ticker extraction. The dataset is
+    # already reindexed to a complete (date x ticker) grid upstream so the
+    # leading ticker is guaranteed present on every date in practice.
     first_ticker = df.index.get_level_values("ticker").unique()[0]
     macro = df.xs(first_ticker, level="ticker")[["vix", "vxn"]].copy()
 
